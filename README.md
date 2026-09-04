@@ -30,3 +30,9 @@ Without keys, `make ingest` loads `tests/fixtures/` so everything downstream sti
 
 ## Rules (from the Architecture Brief)
 No model call in ingest, polling or rendering. Every model call goes through `daemon/llm.py` and lands in `runs`. Every action is an `approvals` row first; executors run only `status='approved'`. Credentials via env / Key Vault only. StartupOS never moves money.
+
+## Deploy to the Azure VM
+```
+./scripts/deploy_azure.sh        # rsync + docker compose up (db, migrate, ingest, daemon, api)
+```
+Sources without credentials are skipped (never fixtures) on a real tenant. Check `connections.status` / `last_error`, or `curl localhost:8000/health` on the VM.
