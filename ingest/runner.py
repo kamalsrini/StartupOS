@@ -51,11 +51,13 @@ def upsert_connection(
     """Create/update the connections row. Credentials never touch this table — secret_ref only."""
     now = when or datetime.now(UTC)
     config = {**_connection_config(source), "mode": mode}
+    status = "disabled" if mode == "skipped" else "connected"
     conn.execute(
         """INSERT INTO connections (id, tenant_id, source, secret_ref, config, status, last_sync_at, last_error)
-           VALUES (%s, %s, %s, %s, %s, 'connected', %s, %s)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT (tenant_id, source) DO UPDATE SET
              config = EXCLUDED.config,
+             status = EXCLUDED.status,
              last_sync_at = CASE WHEN EXCLUDED.last_error IS NULL THEN EXCLUDED.last_sync_at ELSE connections.last_sync_at END,
              last_error = EXCLUDED.last_error""",
         (
@@ -64,6 +66,7 @@ def upsert_connection(
             source,
             SECRET_REFS[source],
             Jsonb(config),
+            status,
             None if error else now,
             error,
         ),
@@ -74,7 +77,14 @@ def run_source(
     conn: psycopg.Connection, tenant_id: str, source: str, *, force_fixtures: bool = False
 ) -> dict[str, UpsertResult]:
     mod = SOURCES[source]
-    use_fixtures = force_fixtures or not mod.has_credentials()
+    if not force_fixtures and not mod.has_credentials():
+        # PE review 2026-09-04: never mix fixture data into a real tenant. Without credentials a source is
+        # skipped (status=disabled) unless fixtures are requested explicitly (--fixtures / tests).
+        upsert_connection(conn, tenant_id, source, mode="skipped", error="no credentials configured")
+        conn.commit()
+        log.warning("ingest %s skipped: no credentials (use --fixtures for sample data)", source)
+        return {}
+    use_fixtures = force_fixtures
     mode = "fixtures" if use_fixtures else "live"
     try:
         results = mod.sync(conn, tenant_id, use_fixtures=use_fixtures)
@@ -98,8 +108,8 @@ def run_all(
     for source in sources or list(SOURCES):
         try:
             out[source] = run_source(conn, tenant_id, source, force_fixtures=force_fixtures)
-        except Exception:  # keep the other sources running; error is already on the connections row
-            out[source] = {}
+        except Exception:  # keep the other sources running; the error is already on the connections row
+            out[source] = None  # type: ignore[assignment]  # None = failed, {} = skipped (no credentials)
     return out
 
 
@@ -139,8 +149,11 @@ def main(argv: list[str] | None = None) -> int:
 
 def _print_summary(results: dict[str, dict[str, UpsertResult]]) -> None:
     for source, tables in results.items():
-        if not tables:
+        if tables is None:
             print(f"{source}: FAILED (see connections.last_error)")
+            continue
+        if not tables:
+            print(f"{source}: skipped (no credentials)")
             continue
         parts = ", ".join(f"{t}: +{r.created} ~{r.updated} ={r.unchanged}" for t, r in tables.items())
         print(f"{source}: {parts}")

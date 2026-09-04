@@ -162,7 +162,10 @@ def _usage(response: Any) -> tuple[int, int, int]:
         v = getattr(u, name, None) if not isinstance(u, dict) else u.get(name)
         return int(v or 0)
 
-    return g("input_tokens"), g("cache_read_input_tokens"), g("output_tokens")
+    # PE review 2026-09-04: cache CREATION tokens are billed (at a 1.25× premium) and were being dropped,
+    # under-reporting the first call of every day. Fold them into tokens_in at the premium rate.
+    created = g("cache_creation_input_tokens")
+    return g("input_tokens") + int(round(created * 1.25)), g("cache_read_input_tokens"), g("output_tokens")
 
 
 def call(

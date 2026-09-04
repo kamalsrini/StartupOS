@@ -213,3 +213,19 @@ def test_record_tier0(conn):
     rid = llm.record_tier0(conn, TENANT, "finance.ap_queue", "signal", "3 bills due")
     run = conn.execute("SELECT * FROM runs WHERE id = %s", (rid,)).fetchone()
     assert run["tier"] == 0 and run["model"] is None and float(run["cost_usd"]) == 0 and run["outcome"] == "3 bills due"
+
+
+def test_usage_counts_cache_creation_tokens_at_premium():
+    from daemon.llm import _usage
+
+    class U:
+        input_tokens = 18
+        cache_read_input_tokens = 0
+        cache_creation_input_tokens = 4000
+        output_tokens = 325
+
+    class R:
+        usage = U()
+
+    tokens_in, cached, out = _usage(R())
+    assert tokens_in == 18 + 5000 and cached == 0 and out == 325
