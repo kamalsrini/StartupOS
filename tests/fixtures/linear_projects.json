@@ -1,0 +1,43 @@
+{
+  "projects": [
+    {
+      "id": "p1",
+      "name": "Customer POC",
+      "status": {
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "targetDate": null,
+      "lead": {},
+      "updatedAt": "2026-09-01T17:29:33.799Z",
+      "url": "https://linear.app/acme/project/customer-poc"
+    },
+    {
+      "id": "p2",
+      "name": "Cloud Studio",
+      "status": {
+        "name": "Planned",
+        "type": "planned"
+      },
+      "targetDate": null,
+      "lead": {},
+      "updatedAt": "2026-08-21T22:23:11.185Z",
+      "url": "https://linear.app/acme/project/cloud-studio"
+    },
+    {
+      "id": "p3",
+      "name": "Controller OpenSrc",
+      "status": {
+        "name": "In Progress",
+        "type": "started"
+      },
+      "targetDate": "2026-12-31",
+      "lead": {
+        "name": "Alex Dev"
+      },
+      "updatedAt": "2026-06-24T16:14:52.274Z",
+      "url": "https://linear.app/acme/project/controller"
+    }
+  ],
+  "hasNextPage": false
+}

@@ -1,0 +1,71 @@
+{
+  "items": [
+    {
+      "id": "dpacc_primary",
+      "name": "Acme, Inc. checking account",
+      "nickname": "Primary checking",
+      "account_number_last_four": "1234",
+      "account_type": "CHECKING",
+      "status": "ACTIVE",
+      "priority": "PRIMARY",
+      "balance_breakdown": {
+        "available_balance": {
+          "value": "8517.26",
+          "currency": "USD",
+          "display": "$8517.26 USD"
+        },
+        "processing_balance": {
+          "value": "0.00",
+          "currency": "USD",
+          "display": "$0.00 USD"
+        }
+      },
+      "cashflow": {
+        "current_month_cash_inflows": {
+          "value": "2500.00",
+          "currency": "USD",
+          "display": "$2500.00 USD"
+        },
+        "current_month_cash_outflows": {
+          "value": "6500.00",
+          "currency": "USD",
+          "display": "$6500.00 USD"
+        }
+      }
+    },
+    {
+      "id": "dpacc_vault",
+      "name": "Acme, Inc. vault account",
+      "nickname": "Vault",
+      "account_number_last_four": "4498",
+      "account_type": "VAULT",
+      "status": "ACTIVE",
+      "priority": "NON_PRIMARY",
+      "balance_breakdown": {
+        "available_balance": {
+          "value": "0.00",
+          "currency": "USD",
+          "display": "$0.00 USD"
+        },
+        "processing_balance": {
+          "value": "0.00",
+          "currency": "USD",
+          "display": "$0.00 USD"
+        }
+      },
+      "cashflow": {
+        "current_month_cash_inflows": {
+          "value": "0.00",
+          "currency": "USD",
+          "display": "$0.00 USD"
+        },
+        "current_month_cash_outflows": {
+          "value": "0.00",
+          "currency": "USD",
+          "display": "$0.00 USD"
+        }
+      }
+    }
+  ],
+  "next_cursor": null
+}

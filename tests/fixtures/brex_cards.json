@@ -1,0 +1,29 @@
+{
+  "items": [
+    {
+      "id": "ncard_1",
+      "status": "ACTIVE",
+      "holder_name": "Cofounder",
+      "display_name": "Cofounder's Employee Card",
+      "last4": "6445",
+      "card_form": "VIRTUAL",
+      "user": {
+        "first_name": "Co",
+        "last_name": "Founder"
+      },
+      "limit": {
+        "spent": {
+          "quantity": "0",
+          "instrument_code_string": "USD"
+        },
+        "available": {
+          "quantity": "100000"
+        },
+        "total": {
+          "quantity": "100000"
+        }
+      }
+    }
+  ],
+  "next_cursor": null
+}

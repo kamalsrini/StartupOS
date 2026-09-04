@@ -1,0 +1,29 @@
+[project]
+name = "startupos"
+version = "0.1.0"
+description = "StartupOS — the founder operating system that opens with work already done."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi", "uvicorn", "pydantic>=2", "psycopg[binary]", "python-dotenv",
+  "anthropic", "slack_sdk", "httpx", "apscheduler",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "ruff", "httpx"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["web", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["S101", "S608", "B008", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = ["functional: needs Postgres", "regression: golden files"]

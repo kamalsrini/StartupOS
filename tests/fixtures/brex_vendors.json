@@ -1,0 +1,33 @@
+{
+  "items": [
+    {
+      "id": "pdcont_v1",
+      "name": "Contractor One",
+      "email": "one@example.com",
+      "rail_account_details": [
+        {
+          "rail": {
+            "type": "US_ACH"
+          },
+          "target_country": "US",
+          "status": "ACTIVE"
+        }
+      ]
+    },
+    {
+      "id": "pdcont_v2",
+      "name": "DevShop LLC",
+      "email": "ap@devshop.example",
+      "rail_account_details": [
+        {
+          "rail": {
+            "type": "INTL_SWIFT_WIRE"
+          },
+          "target_country": "UA",
+          "status": "ACTIVE"
+        }
+      ]
+    }
+  ],
+  "next_cursor": null
+}

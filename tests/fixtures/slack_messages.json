@@ -1,0 +1,32 @@
+{
+  "channels": {
+    "C0SALES": {
+      "name": "sales",
+      "messages": [
+        {
+          "type": "message",
+          "user": "U1",
+          "text": "Northwind replied \u2014 they want the JSON issue reports before the next call",
+          "ts": "1756800000.000100"
+        },
+        {
+          "type": "message",
+          "user": "U2",
+          "text": "Siemens contact opened the CRA demo twice this morning",
+          "ts": "1756803600.000200"
+        }
+      ]
+    },
+    "C0ENG": {
+      "name": "eng",
+      "messages": [
+        {
+          "type": "message",
+          "user": "U1",
+          "text": "ACM-158 graph build still 24 min, unassigned",
+          "ts": "1756810000.000300"
+        }
+      ]
+    }
+  }
+}
