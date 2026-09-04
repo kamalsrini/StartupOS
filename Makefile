@@ -1,6 +1,6 @@
 .PHONY: db lint unit functional regression check dev-api dev-daemon ingest signals pack digest
 
-PY ?= python3
+PY ?= PYTHONPATH=. python3
 TEST_DSN ?= postgresql://postgres@localhost:5432/startupos_test
 
 db:            ## apply schema to DATABASE_URL

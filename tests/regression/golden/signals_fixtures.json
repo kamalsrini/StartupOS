@@ -1,0 +1,53 @@
+{
+  "now": "2026-09-04T12:00:00+00:00",
+  "signals": [
+    {
+      "id": "build.deploy_failed:dpl_2",
+      "severity": "medium"
+    },
+    {
+      "id": "build.duplicate_titles:ACM-150+ACM-151",
+      "severity": "medium"
+    },
+    {
+      "id": "build.stale_in_progress:ACM-126",
+      "severity": "medium"
+    },
+    {
+      "id": "build.unassigned_high:ACM-158",
+      "severity": "high"
+    },
+    {
+      "id": "customers.ask_untouched:ACM-159",
+      "severity": "high"
+    },
+    {
+      "id": "customers.ask_untouched:ACM-160",
+      "severity": "high"
+    },
+    {
+      "id": "finance.bill_due_7d:expense_b2",
+      "severity": "high"
+    },
+    {
+      "id": "finance.cash_low:dpacc_primary",
+      "severity": "high"
+    },
+    {
+      "id": "finance.unmatched_inflow:dptx_1",
+      "severity": "low"
+    },
+    {
+      "id": "finance.unmatched_inflow:dptx_2",
+      "severity": "low"
+    },
+    {
+      "id": "marketing.analytics_off:posthog",
+      "severity": "low"
+    },
+    {
+      "id": "sales.stale_draft_campaign:jci-alts-wave-2",
+      "severity": "medium"
+    }
+  ]
+}

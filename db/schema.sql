@@ -9,8 +9,12 @@ CREATE TABLE IF NOT EXISTS tenants (
   website       TEXT,
   timezone      TEXT NOT NULL DEFAULT 'America/Los_Angeles',
   tier          TEXT NOT NULL DEFAULT 'founder',  -- founder | team | growth
+  pulse_hour    SMALLINT NOT NULL DEFAULT 7,      -- local hour for the morning pulse
+  pulse_channel TEXT NOT NULL DEFAULT 'web',      -- web | slack | both
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pulse_hour SMALLINT NOT NULL DEFAULT 7;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pulse_channel TEXT NOT NULL DEFAULT 'web';
 
 CREATE TABLE IF NOT EXISTS users (
   id            TEXT PRIMARY KEY,
@@ -300,7 +304,9 @@ CREATE TABLE IF NOT EXISTS approvals (
   decided_at    TIMESTAMPTZ,
   decline_reason TEXT,
   result        JSONB,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Executor allow-list is enforced in the DB too: only Linear and Slack may ever be executed. Brex never.
+  CONSTRAINT approvals_exec_server_allowed CHECK (exec IS NULL OR (exec->>'server') IN ('Linear','Slack'))
 );
 CREATE INDEX IF NOT EXISTS approvals_pending ON approvals (tenant_id, module) WHERE status = 'pending';
 

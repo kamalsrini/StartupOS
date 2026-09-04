@@ -106,11 +106,11 @@ Rule registry (`signals/rules.py`) — v1 set, all Tier 0:
 | `build.unassigned_high` | build | high | click | priority ∈ {1,2}, no assignee, not done |
 | `build.stale_in_progress` | build | medium | open | status In Progress, updated_at > 7d |
 | `build.duplicate_titles` | security | medium | reply | two open issues with identical normalized title |
-| `build.deploy_failed` | web | medium | bounce | deployment state ERROR in last 7d |
+| `build.deploy_failed` | web | medium | bounce | deployment state ERROR within the last 7 days of `now` (never anchored to the feed) |
 | `finance.bill_due_7d` | finance | high | reply | bill not CLEARED/SETTLED, due_at ≤ now+7d |
 | `finance.cash_low` | finance | high | reply | primary available < 3 × avg monthly outflow (or < configured floor) |
 | `finance.unmatched_inflow` | finance | low | open | incoming transaction with no matching invoice/payment record |
-| `customers.ask_untouched` | customers | high | reply | issue with account label, no update > 3d |
+| `customers.ask_untouched` | customers | high | reply | issue with `customer:*`/`account:*` label, no update for ≥ 3 calendar days |
 | `sales.reply_detected` | sales | high | reply | sequences.replied increased since last observation |
 | `sales.stale_draft_campaign` | marketing | medium | open | campaign in draft > 14d (from brain gtm.md front-matter) |
 | `marketing.analytics_off` | web | low | click | connection posthog/vercel analytics missing |
@@ -134,4 +134,12 @@ Each skill: `name`, `module`, `tier`, `trigger` (`schedule|signal|ask`), `run(ct
 
 ## Run ledger
 
-Every `daemon/llm.py` call writes `runs`. `GET /runs/summary?month=` returns tokens and cost by tier and skill — shown in the Cockpit as the founder's own spend.
+Every `daemon/llm.py` call writes `runs`. Tier-0 work may also write `runs` rows (tier 0, zero cost) from the daemon or the API — e.g. `onboarding.compile`, executors — so the ledger explains every action, not only model calls. `GET /runs/summary?month=` returns tokens and cost by tier and skill — shown in the Cockpit as the founder's own spend.
+
+## Tenant cadence (added 2026-09-04, PE review)
+
+`tenants.pulse_hour` (local hour, default 7) and `tenants.pulse_channel` (`web|slack|both`) are canonical. `POST /onboarding/cadence` persists them; the daemon scheduler reads them per tenant. `approvals.exec->>'server'` is CHECK-constrained to `Linear|Slack` at the DB level.
+
+## Test isolation
+
+`tests/conftest.py` drops and recreates `startupos_test` once per pytest session. Do not run two `make check` invocations concurrently against the same DSN; set `STARTUPOS_TEST_DSN` per worker if you must.
