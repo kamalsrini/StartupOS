@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Sidebar from "./Sidebar";
-import { getTenant } from "@/lib/api";
+import { me, type Me } from "@/lib/api";
 
 export default function Shell({
   title,
@@ -15,11 +15,18 @@ export default function Shell({
   right?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const [tenant, setTenantState] = useState<string | null>(null);
-  useEffect(() => setTenantState(getTenant()), []);
+  const [who, setWho] = useState<Me | null>(null);
+  useEffect(() => {
+    me()
+      .then((m) => {
+        if (!m) window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname)}`);
+        else setWho(m);
+      })
+      .catch(() => setWho(null));
+  }, []);
   return (
     <div className="app">
-      <Sidebar tenant={tenant} />
+      <Sidebar me={who} />
       <main className="main">
         <div className="topbar">
           <div className="topbar-title">{title}</div>

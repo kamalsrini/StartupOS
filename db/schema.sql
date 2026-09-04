@@ -21,9 +21,44 @@ CREATE TABLE IF NOT EXISTS users (
   tenant_id     TEXT NOT NULL REFERENCES tenants(id),
   email         TEXT NOT NULL,
   name          TEXT,
-  role          TEXT NOT NULL DEFAULT 'owner',    -- owner | admin | member
+  role          TEXT NOT NULL DEFAULT 'owner',    -- owner | admin | member (v1: everyone in a company is owner)
+  google_sub    TEXT,                             -- Google OIDC subject; NULL until first Google sign-in
+  slack_user_id TEXT,                             -- maps Slack button presses to a real identity
+  status        TEXT NOT NULL DEFAULT 'active',   -- active | invited | disabled
+  last_login_at TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (tenant_id, email)
+);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS slack_user_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub ON users (google_sub) WHERE google_sub IS NOT NULL;
+CREATE INDEX IF NOT EXISTS users_email ON users (lower(email));
+
+-- Browser sessions: the cookie carries only the opaque session id (HMAC-signed); state lives here so it can be revoked.
+CREATE TABLE IF NOT EXISTS sessions (
+  id            TEXT PRIMARY KEY,                 -- random 32-byte urlsafe
+  tenant_id     TEXT NOT NULL REFERENCES tenants(id),
+  user_id       TEXT NOT NULL REFERENCES users(id),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  user_agent    TEXT,
+  revoked_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id) WHERE revoked_at IS NULL;
+
+-- Personal API tokens (CLI, Slack gateway, curl). Only the sha256 hash is stored; the token is shown once.
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id            TEXT PRIMARY KEY,
+  tenant_id     TEXT NOT NULL REFERENCES tenants(id),
+  user_id       TEXT NOT NULL REFERENCES users(id),
+  name          TEXT NOT NULL,
+  token_hash    TEXT NOT NULL UNIQUE,             -- sha256 hex of the full token 'sos_<id>_<secret>'
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_used_at  TIMESTAMPTZ,
+  revoked_at    TIMESTAMPTZ
 );
 
 -- Source connections. Credentials are NEVER stored here: secret_ref points at env var / Key Vault name.
@@ -282,11 +317,13 @@ CREATE TABLE IF NOT EXISTS runs (
   tokens_out    INTEGER NOT NULL DEFAULT 0,
   cost_usd      NUMERIC(10,5) NOT NULL DEFAULT 0,
   status        TEXT NOT NULL DEFAULT 'ok',       -- ok | error | degraded
+  acted_by      TEXT,                             -- users.id for ask/decide-triggered runs; NULL for scheduled
   outcome       TEXT,
   started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   finished_at   TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS runs_tenant_time ON runs (tenant_id, started_at DESC);
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS acted_by TEXT;
 
 -- Approvals (the gate) -------------------------------------------------------
 CREATE TABLE IF NOT EXISTS approvals (
@@ -300,7 +337,7 @@ CREATE TABLE IF NOT EXISTS approvals (
   status        TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | declined | executed | failed
   created_by_run TEXT REFERENCES runs(id),
   signal_id     TEXT REFERENCES signals(id),
-  decided_by    TEXT,
+  decided_by    TEXT,                             -- users.id (or 'slack:<id>' before mapping, 'system')
   decided_at    TIMESTAMPTZ,
   decline_reason TEXT,
   result        JSONB,
@@ -309,6 +346,22 @@ CREATE TABLE IF NOT EXISTS approvals (
   CONSTRAINT approvals_exec_server_allowed CHECK (exec IS NULL OR (exec->>'server') IN ('Linear','Slack'))
 );
 CREATE INDEX IF NOT EXISTS approvals_pending ON approvals (tenant_id, module) WHERE status = 'pending';
+
+-- Asks queue: the API never calls a model. A question from the web/API lands here; the daemon services it
+-- (every 30s) with ask.answer or the Chief of Staff, and writes the answer back. Slack answers inline.
+CREATE TABLE IF NOT EXISTS asks (
+  id            TEXT PRIMARY KEY,
+  tenant_id     TEXT NOT NULL REFERENCES tenants(id),
+  user_id       TEXT NOT NULL,
+  mode          TEXT NOT NULL DEFAULT 'answer',   -- answer | cos
+  question      TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'pending',  -- pending | running | done | failed
+  answer        JSONB,                            -- {text} for answer; the CoS output object for cos
+  run_id        TEXT REFERENCES runs(id),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  answered_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS asks_pending ON asks (tenant_id, created_at) WHERE status = 'pending';
 
 -- Budgets --------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS budgets (

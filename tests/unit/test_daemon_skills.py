@@ -37,6 +37,7 @@ TEAM_MD = """# Team
 
 def test_registry_has_v1_skills():
     assert set(skills.REGISTRY) == {
+        "cockpit.chief_of_staff",
         "cockpit.morning_pulse",
         "cockpit.evening_digest",
         "build.assign_owner",

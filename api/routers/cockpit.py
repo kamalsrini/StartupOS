@@ -18,6 +18,7 @@ from common.models import Tile
 router = APIRouter(tags=["cockpit"])
 
 PULSE_SKILL = "cockpit.morning_pulse"
+COS_SKILL = "cockpit.chief_of_staff"
 # ts_headline does not escape source text; we mark hits with private sentinels, escape, then swap in <b>.
 HEADLINE_OPTS = "MaxWords=40, MinWords=15, StartSel=@@HL@@, StopSel=@@/HL@@"
 
@@ -139,6 +140,18 @@ def cockpit(conn: psycopg.Connection = Depends(get_db), tenant_id: str = Depends
             "source": "fallback",
         }
 
+    cos = conn.execute(
+        "SELECT outcome, started_at, status FROM runs WHERE tenant_id=%s AND skill=%s AND outcome IS NOT NULL "
+        "AND started_at >= (now() - interval '36 hours') ORDER BY started_at DESC LIMIT 1",
+        (tenant_id, COS_SKILL),
+    ).fetchone()
+    cos_brief = {"text": cos["outcome"], "at": iso(cos["started_at"]), "status": cos["status"]} if cos else None
+    cos_risks = conn.execute(
+        "SELECT id, module, severity, title, meta FROM signals WHERE tenant_id=%s AND rule_id LIKE 'cos.risk%%' "
+        "AND resolved_at IS NULL ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, first_seen_at DESC LIMIT 10",
+        (tenant_id,),
+    ).fetchall()
+
     fin = finance_summary_data(conn, tenant_id)
     since = now_utc() - timedelta(days=90)
     cash_in = conn.execute(
@@ -197,6 +210,8 @@ def cockpit(conn: psycopg.Connection = Depends(get_db), tenant_id: str = Depends
         "tenant_id": tenant_id,
         "snapshot_at": iso(now_utc()),
         "pulse": pulse,
+        "cos_brief": cos_brief,
+        "cos_risks": [dict(r) for r in cos_risks],
         "tiles": [t.model_dump() for t in tiles],
         "quick_glance": glance,
         "pending_approvals": pending,

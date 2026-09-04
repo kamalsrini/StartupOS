@@ -1,7 +1,7 @@
 """Scheduler: the daemon runs a skill only when a schedule ticks, a signal fires, or a person asks.
 
 Jobs (tenant-local time from tenants.timezone):
-  07:00 cockpit.morning_pulse · 18:00 cockpit.evening_digest · every 15 min signal skills + approved executors ·
+  06:30 cockpit.chief_of_staff (pulse_hour - 1, :30) · 07:00 cockpit.morning_pulse · 18:00 cockpit.evening_digest · every 15 min signal skills + approved executors ·
   Friday 16:00 weekly review placeholder.
 
 APScheduler when installed; otherwise a plain minute loop with the same job table.
@@ -15,6 +15,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
+
+from psycopg.types.json import Jsonb
 
 from common.db import ensure_tenant, get_conn
 from common.settings import settings
@@ -86,6 +88,54 @@ def tick_15m(tenant_id: str | None = None) -> None:
     run_approved(tenant_id)
 
 
+def service_asks(tenant_id: str | None = None, limit: int = 5) -> int:
+    """Answer pending rows in `asks` (queued by the API, which never calls a model). Runs every 30s."""
+    tenant_id = tenant_id or settings.tenant_id
+    from daemon import skills as _skills
+    from daemon.skills.base import build_ctx
+
+    done = 0
+    with get_conn(tenant_id=tenant_id) as conn:
+        rows = conn.execute(
+            """UPDATE asks SET status='running' WHERE id IN (
+                 SELECT id FROM asks WHERE tenant_id=%s AND status='pending' ORDER BY created_at LIMIT %s FOR UPDATE SKIP LOCKED
+               ) RETURNING id, user_id, mode, question""",
+            (tenant_id, limit),
+        ).fetchall()
+        conn.commit()
+        for row in rows:
+            try:
+                if row["mode"] == "cos":
+                    from daemon.skills.cockpit import chief_of_staff as cos
+
+                    out = cos.run(build_ctx(conn, tenant_id, trigger="ask", question=row["question"]))
+                    run_id = out.get("run_id")
+                    answer = {k: v for k, v in out.items() if k not in ("signals", "approvals")}
+                else:
+                    from daemon.skills.ask import answer as ask_answer
+
+                    ctx = build_ctx(conn, tenant_id, question=row["question"])
+                    text = ask_answer.answer(ctx, row["question"])
+                    run_id = ctx.get("run_id")
+                    answer = {"text": text}
+                if run_id:
+                    conn.execute("UPDATE runs SET acted_by=%s WHERE id=%s", (row["user_id"], run_id))
+                conn.execute(
+                    "UPDATE asks SET status='done', answer=%s, run_id=%s, answered_at=now() WHERE id=%s",
+                    (Jsonb(answer), run_id, row["id"]),
+                )
+                done += 1
+            except Exception as exc:  # one bad ask never blocks the queue
+                log.exception("ask %s failed: %s", row["id"], type(exc).__name__)
+                conn.execute(
+                    "UPDATE asks SET status='failed', answer=%s, answered_at=now() WHERE id=%s",
+                    (Jsonb({"error": type(exc).__name__}), row["id"]),
+                )
+            conn.commit()
+    _ = _skills
+    return done
+
+
 def weekly_review(tenant_id: str | None = None) -> str:
     """Friday 16:00 placeholder — Sales and Build weekly review lands in v1.1 (Architecture Brief §5.2)."""
     tenant_id = tenant_id or settings.tenant_id
@@ -110,7 +160,15 @@ def _summ(out: Any) -> str:
 def job_table(tenant_id: str) -> list[dict[str, Any]]:
     """Declarative job list shared by APScheduler and the fallback loop."""
     pulse_hour = tenant_cadence(tenant_id)["pulse_hour"]
+    # The Chief of Staff runs 30 minutes before the pulse so the pulse can read its brief: pulse_hour-1 at :30
+    # (7 → 06:30). A midnight pulse (0) keeps the default 06:30 rather than wrapping to the previous day.
+    cos_hour = pulse_hour - 1 if pulse_hour > 0 else 6
     return [
+        {
+            "id": "chief_of_staff",
+            "cron": {"hour": cos_hour, "minute": 30},
+            "fn": lambda: run_skill("cockpit.chief_of_staff", tenant_id),
+        },
         {
             "id": "morning_pulse",
             "cron": {"hour": pulse_hour, "minute": 0},
@@ -122,6 +180,7 @@ def job_table(tenant_id: str) -> list[dict[str, Any]]:
             "fn": lambda: run_skill("cockpit.evening_digest", tenant_id),
         },
         {"id": "tick_15m", "cron": {"minute": "*/15"}, "fn": lambda: tick_15m(tenant_id)},
+        {"id": "service_asks", "cron": {"second": "*/30"}, "fn": lambda: service_asks(tenant_id)},
         {
             "id": "weekly_review",
             "cron": {"day_of_week": "fri", "hour": 16, "minute": 0},

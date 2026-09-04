@@ -11,28 +11,54 @@ from decimal import Decimal
 from typing import Any
 
 import psycopg
-from fastapi import Header, Query
+from fastapi import Depends, HTTPException, Request, Response
 
+from auth.identity import Principal, resolve_principal
 from common.db import get_conn
 from common.models import Approval, Exec
 from common.settings import settings
 
 
 def api_dsn() -> str:
-    """Tests point the API at the scratch DB via STARTUPOS_API_DSN; otherwise settings.database_url."""
-    return os.environ.get("STARTUPOS_API_DSN") or settings.database_url
+    """STARTUPOS_API_DSN (tests) > STARTUPOS_APP_DSN / settings.app_dsn (RLS role).
+
+    PE review 2026-09-04: never silently fall back to the superuser DSN — that would disable Row Level Security
+    for every request. Outside STARTUPOS_DEV=1 the API refuses to serve without an RLS-bound DSN.
+    """
+    dsn = (
+        os.environ.get("STARTUPOS_API_DSN") or os.environ.get("STARTUPOS_APP_DSN") or getattr(settings, "app_dsn", None)
+    )
+    if dsn:
+        return dsn
+    if os.environ.get("STARTUPOS_DEV") == "1":
+        return settings.database_url
+    raise RuntimeError(
+        "STARTUPOS_APP_DSN is not set. The API must connect as the RLS-bound role `startupos_app` "
+        "(see db/rls.sql); export STARTUPOS_DEV=1 only for local hacking."
+    )
 
 
-def get_db() -> Iterator[psycopg.Connection]:
-    with get_conn(api_dsn()) as conn:
+def optional_principal(request: Request) -> Principal | None:
+    return resolve_principal(request, api_dsn())
+
+
+def current_principal(request: Request) -> Principal:
+    """The authenticated user (Bearer token, then session cookie). 401 otherwise. The tenant comes from the user."""
+    principal = resolve_principal(request, api_dsn())
+    if principal is None:
+        raise HTTPException(status_code=401, detail="not authenticated", headers={"WWW-Authenticate": "Bearer"})
+    return principal
+
+
+def get_db(principal: Principal = Depends(current_principal)) -> Iterator[psycopg.Connection]:
+    """A connection bound to the caller's tenant (sets app.tenant_id → RLS filters every table)."""
+    with get_conn(api_dsn(), tenant_id=principal.tenant_id) as conn:
         yield conn
 
 
-def get_tenant(
-    tenant: str | None = Query(default=None, description="tenant slug; defaults to TENANT_ID"),
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
-) -> str:
-    return tenant or x_tenant_id or settings.tenant_id
+def get_tenant(principal: Principal = Depends(current_principal)) -> str:
+    """Tenant slug of the authenticated user. Never taken from the query string or headers."""
+    return principal.tenant_id
 
 
 # --- money ------------------------------------------------------------------
@@ -202,3 +228,39 @@ def scalar(conn: psycopg.Connection, sql: str, params: tuple[Any, ...] = ()) -> 
     if not row:
         return None
     return next(iter(row.values()))
+
+
+# --- session cookie ----------------------------------------------------------
+
+
+def _is_local_host(request: Request) -> bool:
+    host = (request.headers.get("host") or request.url.hostname or "").split(":")[0].lower()
+    return host in ("localhost", "127.0.0.1", "::1", "testserver")
+
+
+def cookie_secure_for(request: Request) -> bool:
+    from auth import config
+
+    return config.cookie_secure() and not _is_local_host(request)
+
+
+def set_session_cookie(response: Response, request: Request, value: str) -> None:
+    from auth import sessions
+
+    response.set_cookie(
+        sessions.COOKIE_NAME,
+        value,
+        max_age=sessions.ttl_seconds(),
+        httponly=True,
+        samesite="lax",
+        secure=cookie_secure_for(request),
+        path="/",
+    )
+
+
+def clear_session_cookie(response: Response, request: Request) -> None:
+    from auth import sessions
+
+    response.delete_cookie(
+        sessions.COOKIE_NAME, path="/", httponly=True, samesite="lax", secure=cookie_secure_for(request)
+    )

@@ -1,0 +1,90 @@
+{
+  "now": "2026-09-04T12:00:00+00:00",
+  "facts": {
+    "approvals_stale": [
+      {
+        "age_hours": 75,
+        "id": "assign-acm-158",
+        "module": "build",
+        "target": "ACM-158 \u2192 Alex Dev",
+        "type": "Linear \u00b7 assign"
+      }
+    ],
+    "budget": {
+      "cost_usd": "1.23",
+      "month": "2026-09-01",
+      "pct": 8.0,
+      "state": "normal",
+      "tier2_allowed": 1500000,
+      "tier2_used": 120000
+    },
+    "cash": {
+      "account_id": "dpacc_primary",
+      "after_paying_all": "2017.26",
+      "available": "8517.26",
+      "bills_due": [
+        {
+          "amount": "6500.00",
+          "currency": "USD",
+          "days": 5,
+          "due": "2026-09-09",
+          "id": "expense_b2",
+          "payment_status": "AWAITING_PAYMENT",
+          "vendor": "DevShop LLC"
+        }
+      ],
+      "cash_negative_bill": null,
+      "cash_negative_on": null,
+      "horizon_days": 14,
+      "total_due": "6500.00"
+    },
+    "deploys": {
+      "days_since_last_prod_deploy": 2,
+      "failed_last_30d": 1,
+      "last_30d": 2,
+      "last_prod_deploy": "2026-09-02",
+      "prior_30d": 0,
+      "trend": "up"
+    },
+    "gtm": {
+      "campaigns": [
+        {
+          "age_days": 93,
+          "id": "jci-alts-wave-2",
+          "name": "JCI Alts wave 2.0",
+          "since": "2026-06-03",
+          "status": "draft",
+          "targets": 18
+        }
+      ],
+      "sequences": []
+    },
+    "issues_due": [],
+    "issues_untouched": [
+      {
+        "assignee": "Alex Dev",
+        "id": "ACM-126",
+        "idle_days": 15,
+        "priority": "urgent",
+        "status": "In Progress",
+        "title": "Skill hierarchy: scope skills into global/org/repo"
+      }
+    ],
+    "milestones": [],
+    "now": "2026-09-04T12:00:00+00:00",
+    "runway": {
+      "account_id": "dpacc_primary",
+      "available": "8517.26",
+      "basis": "outflow_mtd",
+      "monthly_outflow": "6500.00",
+      "months": 1.3
+    },
+    "sources_disconnected": [
+      {
+        "last_error": null,
+        "source": "posthog",
+        "status": "disabled"
+      }
+    ]
+  }
+}

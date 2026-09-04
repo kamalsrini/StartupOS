@@ -5,7 +5,7 @@ import Link from "next/link";
 import Shell from "@/components/Shell";
 import Tile from "@/components/Tile";
 import ApprovalRow from "@/components/ApprovalRow";
-import { apiGet, apiPost, getTenant, setTenant, type Approval, type Cockpit, type MemoryCard, type OnboardingStatus } from "@/lib/api";
+import { ALLOW_BOOTSTRAP, apiGet, apiPost, me, type Approval, type Cockpit, type MemoryCard, type OnboardingStatus } from "@/lib/api";
 import s from "./wizard.module.css";
 
 const STEPS = ["Company", "Sources", "Compile", "Memory", "First pulse", "Cadence"] as const;
@@ -35,6 +35,7 @@ export default function OnboardingPage() {
   const [name, setName] = useState("");
   const [website, setWebsite] = useState("");
   const [email, setEmail] = useState("");
+  const [bootstrapToken, setBootstrapToken] = useState("");
   const [recommended, setRecommended] = useState<string[]>(["linear", "slack"]);
   // step 2
   const [picked, setPicked] = useState<Record<string, string>>({});
@@ -54,7 +55,8 @@ export default function OnboardingPage() {
   const [budget, setBudget] = useState(1500000);
 
   const refresh = useCallback(async () => {
-    if (!getTenant()) return;
+    // Status is per signed-in user; a 401 here just means "not signed up yet" — don't bounce to /login.
+    if (!(await me().catch(() => null))) return;
     try {
       const st = await apiGet<OnboardingStatus>("/onboarding/status");
       setStatus(st);
@@ -113,15 +115,20 @@ export default function OnboardingPage() {
                 <div className={s.field}><label className={s.label}>Website</label><input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="unitone.ai" /></div>
               </div>
               <div className={s.field}><label className={s.label}>Your email (owner)</label><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" /></div>
+              {ALLOW_BOOTSTRAP ? (
+                <div className={s.field}><label className={s.label}>Bootstrap token (STARTUPOS_BOOTSTRAP_TOKEN)</label><input type="password" value={bootstrapToken} onChange={(e) => setBootstrapToken(e.target.value)} /></div>
+              ) : (
+                <div className={s.hint}>Sign-up needs the operator&apos;s bootstrap token or Google sign-in — already have an account? <a href="/login">Sign in</a>.</div>
+              )}
               <div className={s.hint}>Behind it: tenant created, five brain slices seeded as drafts. No model call happens here.</div>
               <div className={s.actions}>
                 <button
                   className="btn btn-primary"
-                  disabled={busy || !name.trim()}
+                  disabled={busy || !name.trim() || !email.trim() || !bootstrapToken}
                   onClick={() =>
                     guard(async () => {
-                      const r = await apiPost<TenantResp>("/onboarding/tenant", { name, website, email: email || undefined });
-                      setTenant(r.tenant.id);
+                      const r = await apiPost<TenantResp>("/onboarding/tenant", { name, website, email, bootstrap_token: bootstrapToken });
+                      setBootstrapToken("");
                       setRecommended(r.recommended_sources);
                       await refresh();
                       setStep(1);

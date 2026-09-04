@@ -12,6 +12,7 @@ Tokens are read via common.settings and never logged.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shlex
 from typing import Any
@@ -27,6 +28,26 @@ from daemon.skills.ask import answer as ask_answer
 
 log = logging.getLogger("daemon.gateway.slack")
 _MENTION = re.compile(r"<@[A-Z0-9]+>\s*")
+
+
+def _dsn() -> str:
+    return getattr(settings, "app_dsn", None) or settings.database_url
+
+
+def resolve_slack_user(slack_user_id: str, dsn: str | None = None) -> tuple[str, str] | None:
+    """Slack user id → (tenant_id, user_id) via the SECURITY DEFINER lookup, with no tenant bound. None if unmapped."""
+    if not slack_user_id:
+        return None
+    with get_conn(dsn or _dsn(), tenant_id="") as anon:
+        row = anon.execute("SELECT * FROM auth_lookup_slack(%s)", (slack_user_id,)).fetchone()
+    if not row:
+        return None
+    return row["tenant_id"], row["user_id"]
+
+
+def link_hint() -> str:
+    web_url = getattr(settings, "web_url", None) or os.environ.get("STARTUPOS_WEB_URL") or "http://localhost:3000"
+    return f"Link your StartupOS account first: sign in at {web_url} and run /startupos link <your slack id>"
 
 
 def parse_command(text: str) -> tuple[str, list[str]]:
@@ -81,6 +102,14 @@ def handle_text(conn: psycopg.Connection, tenant_id: str, text: str, *, user: st
         lines += [f"• `{a.id}` · {a.type} · {a.target}" for a in rows[:20]]
         lines.append("Reply `approve <id>` or `decline <id> <reason>`.")
         return "\n".join(lines)
+    if re.search(r"what should i worry about|chief of staff|cos brief", text, re.I):
+        from daemon.skills.cockpit import chief_of_staff as cos
+
+        out = cos.run(build_ctx(conn, tenant_id, trigger="ask", question=text))
+        risks = out.get("risks") or []
+        lines = [out.get("brief") or "No brief."]
+        lines += [f"• [{r.get('module')}] {r.get('title')} — {r.get('severity')}" for r in risks[:5]]
+        return "\n".join(lines)
     ctx = build_ctx(conn, tenant_id, question=args[0])
     return ask_answer.answer(ctx, args[0])
 
@@ -118,10 +147,22 @@ def start(tenant_id: str | None = None) -> Any | None:
             return
         text = event.get("text") or ""
         channel = event.get("channel")
-        user = event.get("user") or "slack"
+        slack_user = event.get("user") or ""
+        cmd, _ = parse_command(text)
         try:
-            with get_conn() as conn:
-                reply = handle_text(conn, tenant_id, text, user=user)
+            if cmd in ("approve", "decline"):
+                # Decisions need a real identity: decided_by = users.id of the mapped Slack user, in their tenant.
+                mapped = resolve_slack_user(slack_user)
+                if not mapped:
+                    reply = link_hint()
+                    web.chat_postEphemeral(channel=channel, user=slack_user, text=reply)
+                    return
+                user_tenant, user_id = mapped
+                with get_conn(_dsn(), tenant_id=user_tenant) as conn:
+                    reply = handle_text(conn, user_tenant, text, user=user_id)
+            else:
+                with get_conn(_dsn(), tenant_id=tenant_id) as conn:
+                    reply = handle_text(conn, tenant_id, text, user=slack_user or "slack")
         except Exception as exc:
             log.exception("gateway error: %s", type(exc).__name__)
             reply = f"Something went wrong ({type(exc).__name__}). It's in the run ledger."

@@ -242,8 +242,9 @@ def call(
         "system": system_blocks,
         "messages": messages,
     }
-    if temperature is not None:
-        kwargs["temperature"] = temperature
+    # PE review 2026-09-04: anthropic SDK 1.3 / current models no longer accept `temperature` on
+    # messages.create — the parameter is kept on call() for skill ergonomics but never forwarded.
+    _ = temperature
 
     try:
         client = _client_factory()

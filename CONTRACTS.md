@@ -143,3 +143,49 @@ Every `daemon/llm.py` call writes `runs`. Tier-0 work may also write `runs` rows
 ## Test isolation
 
 `tests/conftest.py` drops and recreates `startupos_test` once per pytest session. Do not run two `make check` invocations concurrently against the same DSN; set `STARTUPOS_TEST_DSN` per worker if you must.
+
+## Authentication and tenant isolation (Sprint 2, 2026-09-04)
+
+**Roles:** one company-wide role for now. Every `users` row is `owner`; the `role` column stays for later separation but nothing branches on it. Authorization = "is an active user of this tenant".
+
+**Identity sources (all resolve to a `users` row and therefore a tenant):**
+1. Browser session — Google OIDC (`GET /auth/google` → Google → `GET /auth/google/callback`), then an httpOnly, SameSite=Lax, Secure (when not localhost) cookie `sos_session` carrying an HMAC-signed opaque session id. State lives in `sessions` (revocable, TTL `STARTUPOS_SESSION_TTL_HOURS`).
+2. API token — `Authorization: Bearer sos_<id>_<secret>`; only `sha256` stored in `api_tokens`; created via `POST /auth/tokens` (shown once), revoked via `DELETE /auth/tokens/{id}`.
+3. Bootstrap — `POST /auth/bootstrap {token, email}` with `STARTUPOS_BOOTSTRAP_TOKEN` creates/activates the first owner of `TENANT_ID` and returns a session. For the single-operator install before Google is configured. Disabled when the env var is empty.
+4. Slack — the gateway maps `slack_user_id` → user via `auth_lookup_slack`; unmapped Slack users cannot approve (the bot replies with a link to `/auth/slack/link`).
+
+**Tenant binding:** the tenant is ALWAYS derived from the authenticated user. `?tenant=` / `X-Tenant-Id` are removed. `api.deps.get_db` opens the connection with `get_conn(tenant_id=user.tenant_id)`, which sets `app.tenant_id`; Row Level Security (`db/rls.sql`) filters every table. Services run as DB role `startupos_app` (NOBYPASSRLS) via `STARTUPOS_APP_DSN`. Cross-tenant ids therefore 404, never 403 (no existence leak).
+
+**Pre-auth lookups** (find the user before the tenant is known) go through `SECURITY DEFINER` functions `auth_lookup_google/token/session/slack` and return only ids — never a cross-tenant row scan from application code.
+
+**Sign-up:** `POST /onboarding/tenant` is the only unauthenticated write and it requires either the bootstrap token or a valid Google id_token; it creates the tenant + owner and returns a session. Google sign-in for an email that matches no user 403s with "ask your owner to invite you" (invites are Sprint 3).
+
+**Acting identity on records:** `approvals.decided_by = users.id`; `runs.acted_by = users.id` for `ask`/`decide` triggers, NULL for scheduled runs.
+
+**Env:** `STARTUPOS_SESSION_SECRET` (required in production; the API refuses to start without it unless `STARTUPOS_DEV=1`), `GOOGLE_CLIENT_ID/SECRET`, `STARTUPOS_PUBLIC_URL`, `STARTUPOS_WEB_URL`, `STARTUPOS_BOOTSTRAP_TOKEN`, `STARTUPOS_APP_DSN`.
+
+**Public routes:** `GET /health`, `GET /auth/google`, `GET /auth/google/callback`, `POST /auth/bootstrap`, `POST /onboarding/tenant`. Everything else requires auth.
+
+## Chief of Staff (hub agent) — spec
+
+Hub-and-spoke: modules are spokes (Sales, Marketing, Customers, Finance, Build, Web, Social, Security). The Chief of Staff runs in the hub — one skill, `cockpit.chief_of_staff`, with the whole brain and every spoke's state in context — and its job is to see across spokes and **raise issues before they land**.
+
+**Inputs (assembled by Tier 0, no model):** context pack; ALL open signals across modules; `events` for the last 7 days grouped by entity; lookahead facts computed by `signals/lookahead.py` (bills due ≤14d vs cash, runway in months, issues with due dates ≤7d, POC milestones from `customers.md` front matter, campaign/sequence ages, deploy cadence last 30d vs prior 30d, stale approvals >48h, budget state); the last 5 Chief of Staff briefs (so it can say what changed); decisions.md tail.
+
+**Output (one Tier-2 call, JSON via `daemon/llm.py`):**
+```json
+{
+  "brief": "≤120 words: the state of the company today, cross-spoke",
+  "risks": [ {"horizon_days": 7, "module": "finance", "title": "…", "why": "evidence with ids", "severity": "high|medium|low", "proposal_id": "…|null"} ],
+  "asks": [ {"title": "…", "owner": "Kamal|Alexey|…", "by": "2026-09-08", "why": "…"} ],
+  "proposals": [ Approval-shaped {module, type, target, preview, exec|null, signal_id|null} ],
+  "changes_since_last": ["…"]
+}
+```
+Risks and asks are written to `signals` as `cos.risk:<slug>` (kind `open`, module = the spoke, `suggested_skill = cockpit.chief_of_staff`) so every spoke page shows what the hub sees. Proposals go to `approvals` through `daemon/approvals.py` like any skill — exec only within the allow-list. The brief is stored as the run outcome and is what `/cockpit` shows as the pulse when present.
+
+**Schedule:** daily 06:30 tenant-local (before the pulse, which then reads it), and on demand via `/ask?mode=cos` or Slack `@StartupOS what should I worry about`. Budget: `high_priority` skill (still runs in `conserve`); skips in `exhausted` with a Tier-0 fallback that lists lookahead facts only.
+
+**Prompt lives at `daemon/prompts/chief_of_staff.md`** and is the contract for tone: evidence-first, ids on every claim, no filler, never invents numbers, says "no data" when a spoke is not connected, distinguishes "will happen" (dated facts) from "might happen" (patterns).
+
+**Memory:** the CoS never edits `brain/` directly. It proposes decisions (record-only approvals); approving one appends to `decisions.md`. It reads its own prior briefs from `runs` to avoid re-raising resolved items.

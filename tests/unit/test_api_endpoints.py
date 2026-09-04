@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.conftest import login_as
+
 pytestmark = pytest.mark.functional
 
 T = "trackc-api"  # dedicated tenant so this file never touches other tracks' rows
@@ -35,18 +37,22 @@ TABLES = (
 
 
 @pytest.fixture()
-def client(conn, test_dsn, monkeypatch):
-    """TestClient bound to the test DB. `conn` is used only to seed; commit before hitting the API."""
-    monkeypatch.setenv("STARTUPOS_API_DSN", test_dsn)
+def client(conn, auth_env):
+    """TestClient signed in as the owner of tenant T (session cookie). `conn` seeds; commit before hitting the API."""
     from common.db import ensure_tenant
 
     ensure_tenant(conn, T, "Track C API", "https://trackc.test")
+    for t in ("sessions", "api_tokens"):
+        conn.execute(f"DELETE FROM {t} WHERE tenant_id = %s", (T,))
     for t in TABLES:
         conn.execute(f"DELETE FROM {t} WHERE tenant_id = %s", (T,))
     conn.commit()
+    user_id, cookie = login_as(conn, T, "owner@trackc.test", "Track C Owner")
     from api.main import app
 
-    with TestClient(app, headers={"X-Tenant-Id": T}) as c:
+    with TestClient(app) as c:
+        c.cookies.set("sos_session", cookie)
+        c.user_id = user_id
         yield c
 
 
@@ -276,7 +282,8 @@ def test_approve_happy_path_then_409(client, conn):
     r = client.post("/approvals/assign-uni-158/decide", json={"decision": "approve", "decided_by": "kamal"})
     assert r.status_code == 200, r.text
     a = r.json()
-    assert a["status"] == "approved" and a["decided_by"] == "kamal" and a["decided_at"]
+    # decided_by is the authenticated user's id — the body value is ignored
+    assert a["status"] == "approved" and a["decided_by"] == client.user_id and a["decided_at"]
     assert a["result"] is None  # execution is the daemon's job
     assert a["exec"]["tool"] == "save_issue"
     r2 = client.post("/approvals/assign-uni-158/decide", json={"decision": "decline", "reason": "changed my mind"})

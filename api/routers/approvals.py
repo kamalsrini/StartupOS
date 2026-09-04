@@ -5,7 +5,8 @@ from __future__ import annotations
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from api.deps import fetch_approvals, get_db, get_tenant, now_utc, row_to_approval
+from api.deps import current_principal, fetch_approvals, get_db, get_tenant, now_utc, row_to_approval
+from auth.identity import Principal
 from common.models import Approval, Decision
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
@@ -39,7 +40,9 @@ def decide(
     body: Decision,
     conn: psycopg.Connection = Depends(get_db),
     tenant_id: str = Depends(get_tenant),
+    principal: Principal = Depends(current_principal),
 ) -> Approval:
+    """Records the decision under the authenticated user (`decided_by = users.id`); body.decided_by is ignored."""
     row = conn.execute(
         "SELECT * FROM approvals WHERE id = %s AND tenant_id = %s FOR UPDATE", (approval_id, tenant_id)
     ).fetchone()
@@ -57,7 +60,7 @@ def decide(
         RETURNING *""",
         (
             new_status,
-            body.decided_by,
+            principal.user_id,
             now_utc(),
             body.reason if new_status == "declined" else None,
             preview,

@@ -8,10 +8,13 @@ from datetime import date
 from typing import Any, Literal
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from api.deps import get_db, get_tenant, now_utc, scalar
+from api.deps import api_dsn, current_principal, get_db, get_tenant, now_utc, scalar, set_session_cookie
+from auth import bootstrap, google, sessions
+from auth.identity import Principal
+from common.db import get_conn
 from common.ids import run_id
 from common.models import MemoryCard
 
@@ -35,6 +38,9 @@ class TenantIn(BaseModel):
     website: str | None = None
     email: str | None = None
     timezone: str | None = None
+    name_of_owner: str | None = Field(default=None, max_length=120)
+    bootstrap_token: str | None = None  # STARTUPOS_BOOTSTRAP_TOKEN — single-operator install
+    google_id_token: str | None = None  # verified Google OIDC id_token — self-serve sign-up
 
 
 class ConnectionIn(BaseModel):
@@ -89,38 +95,70 @@ def recommend_sources(name: str, website: str | None) -> tuple[str, str]:
 
 
 @router.post("/tenant")
-def create_tenant(
-    body: TenantIn,
-    email: str | None = Query(default=None, description="owner email; body.email also accepted"),
-    conn: psycopg.Connection = Depends(get_db),
-) -> dict[str, Any]:
+def create_tenant(body: TenantIn, request: Request, response: Response) -> dict[str, Any]:
+    """Sign-up: the only unauthenticated write. Needs the bootstrap token OR a verified Google id_token.
+
+    Creates tenant + owner (connection bound to the new tenant so RLS WITH CHECK passes for the app role), seeds
+    the five brain slices, and returns a session cookie so the caller can continue authenticated.
+    """
+    owner_email: str | None = None
+    owner_name: str | None = None
+    if body.bootstrap_token is not None:
+        if not bootstrap.enabled():
+            raise HTTPException(status_code=404, detail="bootstrap is disabled")
+        if not bootstrap.check_token(body.bootstrap_token):
+            raise HTTPException(status_code=403, detail="bad bootstrap token")
+        owner_email = (body.email or "").strip().lower()
+        if not owner_email:
+            raise HTTPException(status_code=422, detail="email is required with bootstrap_token")
+    elif body.google_id_token:
+        try:
+            claims = google.verify_id_token(body.google_id_token)  # nonce optional on this path
+        except google.GoogleAuthError:
+            raise HTTPException(status_code=403, detail="invalid Google id_token") from None
+        owner_email = str(claims["email"]).lower()
+        owner_name = claims.get("name")
+        if body.email and body.email.strip().lower() != owner_email:
+            raise HTTPException(status_code=403, detail="email does not match the Google account")
+    else:
+        raise HTTPException(
+            status_code=401,
+            detail="bootstrap_token or google_id_token is required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     tenant_id = slugify(body.name)
     website = _normalize_site(body.website)
-    conn.execute(
-        """INSERT INTO tenants (id, name, website, timezone) VALUES (%s, %s, %s, coalesce(%s, 'America/Los_Angeles'))
-           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, website = coalesce(EXCLUDED.website, tenants.website)""",
-        (tenant_id, body.name, website, body.timezone),
-    )
-    owner = email or body.email
-    if owner:
+    with get_conn(api_dsn(), tenant_id=tenant_id) as conn:
         conn.execute(
-            """INSERT INTO users (id, tenant_id, email, role) VALUES (%s, %s, %s, 'owner')
-               ON CONFLICT (tenant_id, email) DO UPDATE SET role = 'owner'""",
-            (f"{tenant_id}:{owner.lower()}", tenant_id, owner.lower()),
+            """INSERT INTO tenants (id, name, website, timezone) VALUES (%s, %s, %s, coalesce(%s, 'America/Los_Angeles'))
+               ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, website = coalesce(EXCLUDED.website, tenants.website)""",
+            (tenant_id, body.name, website, body.timezone),
         )
-    seeded = 0
-    for slice_name, content in template_slices(body.name, website).items():
-        # Seed only when nothing exists for the slice; never overwrite a human-confirmed doc.
-        cur = conn.execute(
-            """INSERT INTO brain_docs (tenant_id, path, slice, content, version, source)
-               VALUES (%s, %s, %s, %s, 1, 'extracted') ON CONFLICT (tenant_id, path) DO NOTHING""",
-            (tenant_id, f"{slice_name}.md", slice_name, content),
-        )
-        seeded += cur.rowcount
-    row = conn.execute("SELECT * FROM tenants WHERE id = %s", (tenant_id,)).fetchone()
+        if conn.execute("SELECT count(*) AS n FROM users WHERE tenant_id = %s", (tenant_id,)).fetchone()["n"]:
+            # An existing company: only its members may re-run sign-up (no takeover of a slug by a stranger).
+            member = conn.execute(
+                "SELECT id FROM users WHERE tenant_id = %s AND lower(email) = %s", (tenant_id, owner_email)
+            ).fetchone()
+            if not member:
+                raise HTTPException(status_code=409, detail="a company with this name already exists")
+        user = bootstrap.upsert_owner(conn, tenant_id, owner_email, owner_name or body.name_of_owner)
+        seeded = 0
+        for slice_name, content in template_slices(body.name, website).items():
+            # Seed only when nothing exists for the slice; never overwrite a human-confirmed doc.
+            cur = conn.execute(
+                """INSERT INTO brain_docs (tenant_id, path, slice, content, version, source)
+                   VALUES (%s, %s, %s, %s, 1, 'extracted') ON CONFLICT (tenant_id, path) DO NOTHING""",
+                (tenant_id, f"{slice_name}.md", slice_name, content),
+            )
+            seeded += cur.rowcount
+        row = conn.execute("SELECT * FROM tenants WHERE id = %s", (tenant_id,)).fetchone()
+        _, cookie_value = sessions.create_session(conn, tenant_id, user["id"], request.headers.get("user-agent"))
+    set_session_cookie(response, request, cookie_value)
     return {
         "tenant": dict(row),
-        "owner_email": owner,
+        "owner_email": owner_email,
+        "user": {k: user[k] for k in ("id", "email", "name", "tenant_id", "role")},
         "seeded_slices": seeded,
         "recommended_sources": list(recommend_sources(body.name, website)),
         "sources": list(SOURCES),
@@ -310,7 +348,9 @@ def compile_cards(conn: psycopg.Connection, tenant_id: str) -> tuple[list[Memory
 
 @router.post("/compile")
 def compile_onboarding(
-    conn: psycopg.Connection = Depends(get_db), tenant_id: str = Depends(get_tenant)
+    conn: psycopg.Connection = Depends(get_db),
+    tenant_id: str = Depends(get_tenant),
+    principal: Principal = Depends(current_principal),
 ) -> dict[str, Any]:
     cards, counts = compile_cards(conn, tenant_id)
     outcome = (
@@ -320,9 +360,9 @@ def compile_onboarding(
     )
     # Tier-0 ledger row: no model, zero cost. Marks the 'compiled' onboarding step.
     conn.execute(
-        """INSERT INTO runs (id, tenant_id, trigger, skill, tier, model, status, outcome, finished_at)
-           VALUES (%s, %s, 'ask', %s, 0, NULL, 'ok', %s, %s)""",
-        (run_id(), tenant_id, COMPILE_SKILL, outcome, now_utc()),
+        """INSERT INTO runs (id, tenant_id, trigger, skill, tier, model, status, outcome, finished_at, acted_by)
+           VALUES (%s, %s, 'ask', %s, 0, NULL, 'ok', %s, %s, %s)""",
+        (run_id(), tenant_id, COMPILE_SKILL, outcome, now_utc(), principal.user_id),
     )
     return {"cards": [c.model_dump() for c in cards], "counts": counts, "outcome": outcome, "tier": 0}
 

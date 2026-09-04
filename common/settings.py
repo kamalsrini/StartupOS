@@ -26,6 +26,17 @@ class Settings:
     test_dsn: str = field(
         default_factory=lambda: _env("STARTUPOS_TEST_DSN", "postgresql://postgres@localhost:5432/startupos_test")
     )
+    # Services connect as the RLS-bound app role when this is set; superuser DATABASE_URL stays for migrations.
+    app_dsn: str | None = field(default_factory=lambda: _env("STARTUPOS_APP_DSN"))
+    # Auth
+    session_secret: str | None = field(default_factory=lambda: _env("STARTUPOS_SESSION_SECRET"))
+    session_ttl_hours: int = field(default_factory=lambda: int(_env("STARTUPOS_SESSION_TTL_HOURS", "336") or 336))
+    google_client_id: str | None = field(default_factory=lambda: _env("GOOGLE_CLIENT_ID"))
+    google_client_secret: str | None = field(default_factory=lambda: _env("GOOGLE_CLIENT_SECRET"))
+    public_url: str = field(default_factory=lambda: _env("STARTUPOS_PUBLIC_URL", "http://localhost:8000"))
+    web_url: str = field(default_factory=lambda: _env("STARTUPOS_WEB_URL", "http://localhost:3000"))
+    bootstrap_token: str | None = field(default_factory=lambda: _env("STARTUPOS_BOOTSTRAP_TOKEN"))
+    cookie_secure: bool = field(default_factory=lambda: (_env("STARTUPOS_COOKIE_SECURE", "auto") or "auto") != "false")
     tenant_id: str = field(default_factory=lambda: _env("TENANT_ID", "unitone"))
     tier2_model: str = field(default_factory=lambda: _env("STARTUPOS_TIER2_MODEL", "claude-sonnet-4-5"))
     tier1_model: str = field(default_factory=lambda: _env("STARTUPOS_TIER1_MODEL", "claude-haiku-4-5"))

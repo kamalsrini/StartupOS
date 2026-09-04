@@ -5,14 +5,26 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.conftest import login_as
+
 pytestmark = pytest.mark.functional
 
 
 @pytest.fixture()
-def client(conn, test_dsn, monkeypatch):
-    monkeypatch.setenv("STARTUPOS_API_DSN", test_dsn)
+def client(conn, auth_env):
     # Only touch the tenant this flow creates; other tracks share the scratch DB.
-    for t in ("approvals", "runs", "budgets", "brain_docs", "connections", "users", "issues", "projects", "accounts"):
+    for t in (
+        "approvals",
+        "runs",
+        "budgets",
+        "brain_docs",
+        "connections",
+        "sessions",
+        "users",
+        "issues",
+        "projects",
+        "accounts",
+    ):
         conn.execute(f"DELETE FROM {t} WHERE tenant_id = 'acme-dev-tools'")
     conn.execute("DELETE FROM tenants WHERE id = 'acme-dev-tools'")
     conn.commit()
@@ -23,13 +35,24 @@ def client(conn, test_dsn, monkeypatch):
 
 
 def test_onboarding_flow(client, conn):
-    # 1. tenant
+    # 1. tenant — sign-up needs the bootstrap token (or a Google id_token); the response sets the session cookie
     r = client.post(
         "/onboarding/tenant",
-        params={"email": "founder@acme.dev"},
-        json={"name": "Acme Dev Tools", "website": "acme.dev"},
+        json={"name": "Acme Dev Tools", "website": "acme.dev", "email": "founder@acme.dev"},
+    )
+    assert r.status_code == 401
+    r = client.post(
+        "/onboarding/tenant",
+        json={
+            "name": "Acme Dev Tools",
+            "website": "acme.dev",
+            "email": "founder@acme.dev",
+            "bootstrap_token": "bootstrap-test-token",
+        },
     )
     assert r.status_code == 200, r.text
+    assert "sos_session" in r.cookies
+    assert r.json()["user"]["email"] == "founder@acme.dev"
     body = r.json()
     tid = body["tenant"]["id"]
     assert tid == "acme-dev-tools"
@@ -46,7 +69,7 @@ def test_onboarding_flow(client, conn):
     assert all(d["source"] == "extracted" and "Draft — confirm or edit" in d["content"] for d in docs)
     assert any("https://acme.dev" in d["content"] for d in docs)
 
-    q = {"tenant": tid}
+    q: dict[str, str] = {}  # tenant comes from the session cookie, never the query string
     st = client.get("/onboarding/status", params=q).json()
     assert st["steps"] == {
         "tenant": True,
@@ -176,11 +199,15 @@ def test_onboarding_flow(client, conn):
     }
     assert st["done"] == 6
 
-    # tenant scoping: default tenant sees none of this
-    assert client.get("/onboarding/status").json()["steps"]["compiled"] is False
-    assert client.get("/modules/build", params=q).json()["tiles"][0]["val"] == "3"
+    assert client.get("/modules/build").json()["tiles"][0]["val"] == "3"
+    # tenant scoping: `?tenant=` is ignored — a stranger's session sees none of this
+    assert client.get("/onboarding/status", params={"tenant": tid}).json()["tenant_id"] == tid
+    _, other_cookie = login_as(conn, "unitone", "someone@unitone.ai")
+    client.cookies.set("sos_session", other_cookie)
+    assert client.get("/onboarding/status", params={"tenant": tid}).json()["steps"]["compiled"] is False
 
 
-def test_status_for_unknown_tenant_is_all_false(client):
-    st = client.get("/onboarding/status", params={"tenant": "ghost"}).json()
-    assert st["done"] == 0 and not any(st["steps"].values())
+def test_status_without_session_is_401(client):
+    client.cookies.clear()
+    r = client.get("/onboarding/status", params={"tenant": "ghost"})
+    assert r.status_code == 401 and r.headers.get("www-authenticate") == "Bearer"

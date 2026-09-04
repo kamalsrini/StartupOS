@@ -1,7 +1,7 @@
 // Thin client for the StartupOS API. The web app uses the API only — never Postgres, never a model.
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const TENANT_KEY = "sos.tenant";
+export const ALLOW_BOOTSTRAP = process.env.NEXT_PUBLIC_ALLOW_BOOTSTRAP === "1";
 
 export type Tile = { label: string; val: string; sub: string; cls: "" | "warn" | "bad" };
 export type SignalView = {
@@ -74,28 +74,24 @@ export type OnboardingStatus = {
   total: number;
 };
 
-export function getTenant(): string | null {
-  try {
-    return typeof window !== "undefined" ? window.localStorage.getItem(TENANT_KEY) : null;
-  } catch {
-    return null;
-  }
-}
+export type Me = {
+  user: { id: string; email: string; name: string | null; tenant_id: string; role: string };
+  via: "session" | "token" | "bootstrap";
+};
 
-export function setTenant(id: string) {
-  try {
-    window.localStorage.setItem(TENANT_KEY, id);
-  } catch {
-    /* private mode */
-  }
-}
-
+// The tenant is never sent by the client: the API derives it from the session cookie.
 function url(path: string, params?: Record<string, string | undefined>): string {
   const u = new URL(path, API_BASE);
-  const tenant = getTenant();
-  if (tenant) u.searchParams.set("tenant", tenant);
   if (params) for (const [k, v] of Object.entries(params)) if (v !== undefined) u.searchParams.set(k, v);
   return u.toString();
+}
+
+/** Auth guard: any 401 sends the browser to /login (except while already there). */
+function onUnauthorized() {
+  if (typeof window === "undefined") return;
+  if (window.location.pathname.startsWith("/login")) return;
+  const next = encodeURIComponent(window.location.pathname + window.location.search);
+  window.location.assign(`/login?next=${next}`);
 }
 
 export class ApiError extends Error {
@@ -107,6 +103,7 @@ export class ApiError extends Error {
 }
 
 async function handle<T>(res: Response): Promise<T> {
+  if (res.status === 401) onUnauthorized();
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -121,21 +118,38 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 export async function apiGet<T>(path: string, params?: Record<string, string | undefined>): Promise<T> {
-  return handle<T>(await fetch(url(path, params), { cache: "no-store" }));
+  return handle<T>(await fetch(url(path, params), { cache: "no-store", credentials: "include" }));
 }
 
 export async function apiPost<T>(path: string, body?: unknown, params?: Record<string, string | undefined>): Promise<T> {
   return handle<T>(
     await fetch(url(path, params), {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
   );
 }
 
+export async function apiDelete<T>(path: string): Promise<T> {
+  return handle<T>(await fetch(url(path), { method: "DELETE", credentials: "include" }));
+}
+
+/** Signed-in user, or null when there is no session (does NOT redirect — callers decide). */
+export async function me(): Promise<Me | null> {
+  const res = await fetch(url("/auth/me"), { cache: "no-store", credentials: "include" });
+  if (res.status === 401) return null;
+  return handle<Me>(res);
+}
+
+export async function logout(): Promise<void> {
+  await fetch(url("/auth/logout"), { method: "POST", credentials: "include" });
+}
+
 export function decide(id: string, decision: "approve" | "decline", extra: { reason?: string; edited_preview?: string } = {}) {
-  return apiPost<Approval>(`/approvals/${encodeURIComponent(id)}/decide`, { decision, decided_by: "owner", ...extra });
+  // decided_by is set server-side from the session; nothing to send.
+  return apiPost<Approval>(`/approvals/${encodeURIComponent(id)}/decide`, { decision, ...extra });
 }
 
 export function timeAgo(iso: string | null | undefined): string {

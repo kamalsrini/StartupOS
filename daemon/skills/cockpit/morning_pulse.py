@@ -20,6 +20,27 @@ No preamble, no markdown headers other than the one above, under 180 words.
 """
 
 USER_PROMPT = "Draft a four-line pulse + three things that need you."
+COS_SKILL = "cockpit.chief_of_staff"
+
+
+def latest_cos_brief(ctx: Ctx) -> str | None:
+    """Today's Chief of Staff brief (runs.outcome of cockpit.chief_of_staff since local midnight-ish), if any."""
+    conn, tenant, now = ctx["conn"], ctx["tenant_id"], ctx["now"]
+    row = conn.execute(
+        """SELECT outcome FROM runs WHERE tenant_id = %s AND skill = %s AND status IN ('ok', 'degraded')
+             AND outcome IS NOT NULL AND outcome NOT LIKE 'refused:%%' AND outcome NOT LIKE 'error:%%'
+             AND started_at >= %s
+           ORDER BY started_at DESC LIMIT 1""",
+        (tenant, COS_SKILL, now.replace(hour=0, minute=0, second=0, microsecond=0)),
+    ).fetchone()
+    return row["outcome"] if row else None
+
+
+def user_prompt(ctx: Ctx) -> str:
+    brief = latest_cos_brief(ctx)
+    if not brief:
+        return USER_PROMPT
+    return f"Chief of Staff brief (this morning, cross-spoke):\n{brief}\n\n{USER_PROMPT}"
 
 
 def _fallback(ctx: Ctx) -> str:
@@ -40,7 +61,7 @@ def run(ctx: Ctx) -> str:
             2,
             NAME,
             system_prompt(ctx, INSTRUCTIONS),
-            [{"role": "user", "content": USER_PROMPT}],
+            [{"role": "user", "content": user_prompt(ctx)}],
             trigger="schedule",
             max_tokens=600,
             high_priority=True,  # the pulse is the product's front door; it survives conserve mode

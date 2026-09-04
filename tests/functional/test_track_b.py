@@ -165,6 +165,14 @@ def test_scheduler_builds_jobs_in_tenant_timezone(monkeypatch):
     sched = scheduler.build_scheduler(TENANT)
     assert sched is not None
     jobs = {j.id: str(j.trigger) for j in sched.get_jobs()}
-    assert set(jobs) == {"morning_pulse", "evening_digest", "tick_15m", "weekly_review"}
+    assert set(jobs) == {
+        "chief_of_staff",
+        "morning_pulse",
+        "evening_digest",
+        "tick_15m",
+        "service_asks",
+        "weekly_review",
+    }
     assert "hour='7'" in jobs["morning_pulse"] and "hour='18'" in jobs["evening_digest"]
+    assert "hour='6'" in jobs["chief_of_staff"] and "minute='30'" in jobs["chief_of_staff"]
     assert "minute='*/15'" in jobs["tick_15m"] and "day_of_week='fri'" in jobs["weekly_review"]
