@@ -1,0 +1,53 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-startupos}
+      POSTGRES_DB: startupos
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    ports: ["5432:5432"]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 5s, retries: 10 }
+
+  migrate:
+    build: .
+    command: python scripts/apply_schema.py
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:-startupos}@db:5432/startupos"
+      STARTUPOS_APP_PASSWORD: "${STARTUPOS_APP_PASSWORD:-startupos_app}"
+    depends_on: { db: { condition: service_healthy } }
+
+  ingest:
+    build: .
+    command: python -m ingest.runner --loop
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:-startupos}@db:5432/startupos"
+      STARTUPOS_APP_DSN: "postgresql://startupos_app:${STARTUPOS_APP_PASSWORD:-startupos_app}@db:5432/startupos"
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+
+  daemon:
+    build: .
+    command: python -m daemon.main
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:-startupos}@db:5432/startupos"
+      STARTUPOS_APP_DSN: "postgresql://startupos_app:${STARTUPOS_APP_PASSWORD:-startupos_app}@db:5432/startupos"
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+
+  api:
+    build: .
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:-startupos}@db:5432/startupos"
+      STARTUPOS_APP_DSN: "postgresql://startupos_app:${STARTUPOS_APP_PASSWORD:-startupos_app}@db:5432/startupos"
+    ports: ["8000:8000"]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+
+volumes:
+  pgdata: {}

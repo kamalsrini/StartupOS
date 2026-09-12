@@ -1,0 +1,30 @@
+{
+  "deployments": {
+    "deployments": [
+      {
+        "id": "dpl_1",
+        "name": "site",
+        "url": "site-abc.vercel.app",
+        "created": 1788372000000,
+        "state": "READY",
+        "target": "production",
+        "meta": {
+          "githubCommitMessage": "Strip PII metadata from PNG images"
+        },
+        "inspectorUrl": "https://vercel.com/acme/site/1"
+      },
+      {
+        "id": "dpl_2",
+        "name": "site",
+        "url": "site-def.vercel.app",
+        "created": 1788256800000,
+        "state": "ERROR",
+        "target": "production",
+        "meta": {
+          "githubCommitMessage": "feat: add demo"
+        },
+        "inspectorUrl": "https://vercel.com/acme/site/2"
+      }
+    ]
+  }
+}

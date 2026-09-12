@@ -1,0 +1,45 @@
+{
+  "items": [
+    {
+      "id": "dptx_1",
+      "type": "WIRE",
+      "status": "PROCESSED",
+      "amount": {
+        "value": "2500.00",
+        "currency": "USD",
+        "display": "$2500.00 USD"
+      },
+      "timestamp": "2026-07-16T04:43:49",
+      "display_name": "FOUNDER CAPITAL",
+      "source_account": {
+        "account_type": "EXTERNAL_ACCOUNT",
+        "display_name": "FOUNDER CAPITAL"
+      },
+      "target_account": {
+        "account_type": "BREX_BUSINESS_ACCOUNT",
+        "id": "dpacc_primary"
+      }
+    },
+    {
+      "id": "dptx_2",
+      "type": "WIRE",
+      "status": "PROCESSED",
+      "amount": {
+        "value": "9000.00",
+        "currency": "USD",
+        "display": "$9000.00 USD"
+      },
+      "timestamp": "2026-06-16T14:37:29",
+      "display_name": "NORTHWIND TRADERS",
+      "source_account": {
+        "account_type": "EXTERNAL_ACCOUNT",
+        "display_name": "NORTHWIND TRADERS"
+      },
+      "target_account": {
+        "account_type": "BREX_BUSINESS_ACCOUNT",
+        "id": "dpacc_primary"
+      }
+    }
+  ],
+  "next_cursor": null
+}
