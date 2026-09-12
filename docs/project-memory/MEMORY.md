@@ -1,0 +1,14 @@
+- [StartupOS SDLC process](startupos_sdlc.md) — READ FIRST for any StartupOS work: three hats, briefs first, task list, parallel agents, four gates
+- [StartupOS sprint state](startupos_sdlc_state.md) — what shipped in the `startupos/` repo, gate results, open PE findings, next tasks
+- [StartupOS deploy](startupos_deploy.md) — running on the Azure VM via docker compose; how to update/inspect/stop; env vars needed
+- [Deliverables go in the folder](feedback_deliverables.md) — write files directly into StartupAgents/, never hand over tar/zip
+- [StartupOS vision](startupos_vision.md) — memory-centric founder OS that opens with work already done; not idea generation, execution layer
+- [StartupOS reference doc](startupos_reference_doc.md) — `/Users/kamal/StartupAgents/StartupOS_Research_Brief.md` + `StartupOS_Architecture_Brief.md` are canonical, written-with across sessions
+- [StartupOS artifact runtime](startupos_artifact_runtime.md) — the Sep 3 demo artifact: single HTML + baked MCP snapshots + live artifact-runtime bridge; published URL
+- [UnitOne GTM production stack](unitone_gtm_stack.md) — Azure VM at azureuser@20.106.244.178, 7 cron jobs, Apollo + PostHog + Slack live; substrate for the Sales module
+- [UnitOne GTM scripts](unitone_gtm_scripts.md) — what each Python script does and when it runs
+- [Finance memory schema](finance_schema.md) — bills/invoices/payments slices for Finance module; AP-AR-cash data shape
+- [Brex integration](brex_integration.md) — Brex MCP connected (UUID, tools wired, data shapes, status mapping)
+- [JCI Alts campaign](jci_alts_campaign.md) — Wave 2.0 outbound drafted overnight 2026-06-03 targeting BAS vendors with /spine demo evidence; awaiting morning approval
+- [User role and product orientation](user_role.md) — Principal-engineer-grade founder; B2B SaaS taste; building public products, not internal tools
+- [Build/communication preferences](feedback_communication.md) — research before building, ask before going deep, surface gaps don't hide them

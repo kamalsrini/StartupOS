@@ -1,0 +1,2652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StartupOS</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+<style>
+:root { color-scheme: light; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: #fafaf9;
+  color: #1c1917;
+  font-size: 13px;
+  line-height: 1.45;
+}
+button { font-family: inherit; cursor: pointer; }
+input, textarea, select { font-family: inherit; }
+a { color: #2563eb; text-decoration: none; }
+
+/* Layout */
+.app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+
+/* Sidebar */
+.sidebar { background: #f5f5f4; border-right: 1px solid #e7e5e4; padding: 16px 12px; display: flex; flex-direction: column; gap: 4px; }
+.brand { display: flex; align-items: center; gap: 8px; padding: 8px 10px 16px; }
+.brand-mark { width: 24px; height: 24px; border-radius: 6px; background: linear-gradient(135deg, #0f172a, #475569); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 14px; }
+.brand-name { font-weight: 700; font-size: 14px; letter-spacing: -0.01em; }
+.nav-group-label { font-size: 10px; font-weight: 600; color: #78716c; letter-spacing: 0.06em; text-transform: uppercase; padding: 12px 10px 4px; }
+.nav-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; color: #44403c; font-weight: 500; cursor: pointer; transition: background 0.1s; user-select: none; }
+.nav-item:hover { background: #e7e5e4; }
+.nav-item.active { background: #1c1917; color: #fafaf9; }
+.nav-item.stub { color: #a8a29e; }
+.nav-dot { width: 6px; height: 6px; border-radius: 50%; background: #d6d3d1; }
+.nav-item.active .nav-dot { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
+.sidebar-foot { margin-top: auto; padding: 12px 10px; font-size: 11px; color: #a8a29e; border-top: 1px solid #e7e5e4; }
+
+/* Main */
+.main { display: flex; flex-direction: column; min-width: 0; }
+.topbar { padding: 12px 24px; border-bottom: 1px solid #e7e5e4; background: #fff; display: flex; align-items: center; gap: 16px; }
+.topbar-title { font-size: 14px; font-weight: 600; }
+.topbar-crumb { font-size: 12px; color: #78716c; }
+.topbar-spacer { flex: 1; }
+.cmd-hint { font-size: 11px; color: #78716c; background: #f5f5f4; padding: 4px 10px; border-radius: 4px; border: 1px solid #e7e5e4; }
+.cmd-hint kbd { font-family: ui-monospace, monospace; font-weight: 600; color: #1c1917; }
+.connect-btn { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.connect-btn:hover { background: #fde68a; }
+.connect-btn.done { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+
+.content { padding: 20px 24px; max-width: 1400px; }
+
+/* Cards */
+.card { background: #fff; border: 1px solid #e7e5e4; border-radius: 8px; }
+.card-header { padding: 14px 16px; border-bottom: 1px solid #f5f5f4; display: flex; align-items: center; gap: 10px; }
+.card-title { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #44403c; }
+.card-title .accent { color: #2563eb; }
+.card-body { padding: 16px; }
+.card-foot { padding: 10px 16px; border-top: 1px solid #f5f5f4; display: flex; align-items: center; gap: 10px; font-size: 11px; color: #78716c; }
+
+/* Memory panel */
+.memory-card { margin-bottom: 16px; border-color: #d6d3d1; background: linear-gradient(180deg, #fff, #fafaf9); }
+.memory-card .card-header { background: #f5f5f4; border-bottom-color: #e7e5e4; border-radius: 8px 8px 0 0; }
+.memory-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.memory-slice { background: #fff; border: 1px solid #f5f5f4; border-radius: 6px; padding: 10px 12px; min-height: 76px; }
+.memory-slice-label { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #78716c; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+.memory-slice-label .pill { font-size: 9px; background: #ecfeff; color: #0e7490; padding: 1px 6px; border-radius: 8px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.memory-slice-content { font-size: 12px; color: #1c1917; line-height: 1.5; }
+.memory-actions { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+.btn { font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 5px; border: 1px solid transparent; background: #fafaf9; color: #1c1917; }
+.btn:hover { background: #f5f5f4; border-color: #e7e5e4; }
+.btn-primary { background: #1c1917; color: #fafaf9; border-color: #1c1917; }
+.btn-primary:hover { background: #44403c; border-color: #44403c; }
+.btn-ghost { background: transparent; }
+.btn-ghost:hover { background: #f5f5f4; }
+.ask-bar { display: flex; gap: 8px; margin-top: 12px; padding: 6px 6px 6px 12px; border: 1px solid #d6d3d1; border-radius: 6px; background: #fff; align-items: center; }
+.ask-bar:focus-within { border-color: #2563eb; box-shadow: 0 0 0 2px #2563eb22; }
+.ask-bar input { flex: 1; border: none; outline: none; font-size: 13px; background: transparent; }
+.ask-bar input::placeholder { color: #a8a29e; }
+.ask-bar button { padding: 5px 12px; font-size: 11px; font-weight: 600; background: #1c1917; color: #fafaf9; border: none; border-radius: 4px; }
+
+/* Sales grid */
+.sales-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+.col { display: flex; flex-direction: column; gap: 16px; }
+
+/* Daily pulse */
+.pulse-card .card-body { padding: 14px 16px; }
+.pulse-content { font-size: 13px; color: #1c1917; line-height: 1.6; min-height: 60px; }
+.pulse-meta { display: flex; gap: 12px; font-size: 11px; color: #78716c; margin-top: 8px; }
+.pulse-pill { padding: 2px 8px; border-radius: 8px; font-weight: 600; font-size: 10px; }
+.pulse-pill.hot { background: #fef2f2; color: #b91c1c; }
+.pulse-pill.warm { background: #fffbeb; color: #b45309; }
+.pulse-pill.cool { background: #eff6ff; color: #1e40af; }
+
+/* Sequences */
+.seq-list { display: flex; flex-direction: column; gap: 10px; }
+.seq-row { padding: 12px 14px; border: 1px solid #f5f5f4; border-radius: 6px; transition: border 0.1s; }
+.seq-row:hover { border-color: #d6d3d1; }
+.seq-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.seq-name { font-weight: 600; font-size: 13px; }
+.seq-status { font-size: 10px; padding: 2px 8px; border-radius: 8px; font-weight: 600; }
+.seq-status.active { background: #dcfce7; color: #166534; }
+.seq-status.paused { background: #f5f5f4; color: #78716c; }
+.seq-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.seq-stat-num { font-size: 16px; font-weight: 700; color: #1c1917; }
+.seq-stat-label { font-size: 10px; color: #78716c; letter-spacing: 0.04em; text-transform: uppercase; }
+
+/* Signals queue */
+.signal-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #f5f5f4; }
+.signal-row:last-child { border-bottom: none; }
+.signal-icon { width: 26px; height: 26px; flex-shrink: 0; border-radius: 13px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+.signal-icon.reply { background: #fef2f2; color: #b91c1c; }
+.signal-icon.click { background: #fff7ed; color: #c2410c; }
+.signal-icon.open { background: #fefce8; color: #a16207; }
+.signal-icon.bounce { background: #f5f5f4; color: #78716c; }
+.signal-body { flex: 1; min-width: 0; }
+.signal-title { font-weight: 600; font-size: 12px; }
+.signal-meta { font-size: 11px; color: #78716c; margin-top: 2px; }
+.signal-action { font-size: 11px; padding: 4px 10px; border: 1px solid #d6d3d1; background: #fff; border-radius: 4px; font-weight: 600; }
+.signal-action:hover { border-color: #1c1917; }
+
+/* Workflows */
+.workflow-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.wf-btn { padding: 12px; border: 1px solid #e7e5e4; background: #fff; border-radius: 6px; text-align: left; display: flex; flex-direction: column; gap: 4px; transition: all 0.1s; }
+.wf-btn:hover { border-color: #1c1917; transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,0.04); }
+.wf-icon { font-size: 14px; }
+.wf-name { font-weight: 600; font-size: 11px; }
+.wf-desc { font-size: 10px; color: #78716c; line-height: 1.3; }
+
+/* Approve queue */
+.approve-row { padding: 12px 14px; border: 1px solid #e7e5e4; border-radius: 6px; margin-bottom: 8px; background: #fff; }
+.approve-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.approve-type { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #2563eb; }
+.approve-target { font-size: 11px; color: #78716c; }
+.approve-preview { font-size: 12px; color: #292524; padding: 10px 12px; background: #fafaf9; border-left: 3px solid #d6d3d1; border-radius: 0 4px 4px 0; white-space: pre-wrap; line-height: 1.5; }
+.approve-actions { display: flex; gap: 6px; margin-top: 10px; }
+.btn-approve { background: #1c1917; color: #fafaf9; border-color: #1c1917; font-size: 11px; padding: 5px 12px; }
+.btn-edit { font-size: 11px; padding: 5px 12px; }
+.btn-decline { font-size: 11px; padding: 5px 12px; color: #b91c1c; }
+
+/* Modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(28,25,23,0.4); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+.modal-overlay.open { display: flex; }
+.modal { background: #fff; border-radius: 10px; width: 100%; max-width: 720px; max-height: 90vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,0.15); }
+.modal-head { padding: 16px 20px; border-bottom: 1px solid #e7e5e4; display: flex; justify-content: space-between; align-items: center; }
+.modal-title { font-size: 14px; font-weight: 700; }
+.modal-close { background: none; border: none; font-size: 18px; color: #78716c; padding: 0; width: 28px; height: 28px; border-radius: 4px; }
+.modal-close:hover { background: #f5f5f4; color: #1c1917; }
+.modal-body { padding: 20px; overflow-y: auto; }
+.field { margin-bottom: 16px; }
+.field-label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #44403c; margin-bottom: 4px; display: block; }
+.field input, .field textarea { width: 100%; padding: 8px 10px; border: 1px solid #d6d3d1; border-radius: 5px; font-size: 12px; background: #fff; resize: vertical; }
+.field textarea { min-height: 60px; font-family: inherit; }
+.field input:focus, .field textarea:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 2px #2563eb22; }
+.modal-foot { padding: 14px 20px; border-top: 1px solid #e7e5e4; display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Chart */
+.chart-wrap { position: relative; height: 180px; }
+
+/* Stub modules */
+.stub-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; text-align: center; }
+.stub-icon { font-size: 36px; opacity: 0.3; margin-bottom: 12px; }
+.stub-title { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+.stub-sub { font-size: 12px; color: #78716c; max-width: 360px; margin-bottom: 16px; }
+.stub-features { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; font-size: 12px; color: #57534e; text-align: left; }
+.stub-features div::before { content: "○ "; color: #a8a29e; }
+
+/* Toast */
+.toast { position: fixed; bottom: 20px; right: 20px; background: #1c1917; color: #fafaf9; padding: 10px 16px; border-radius: 6px; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); opacity: 0; transition: opacity 0.2s; z-index: 200; pointer-events: none; }
+.toast.show { opacity: 1; }
+
+/* Tiny */
+.dot-sep { color: #d6d3d1; margin: 0 6px; }
+.muted { color: #78716c; }
+.small { font-size: 11px; }
+.tag { font-size: 10px; padding: 1px 6px; border-radius: 8px; background: #f5f5f4; color: #57534e; font-weight: 600; }
+.kv-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 12px; border-bottom: 1px solid #f5f5f4; }
+.kv-row:last-child { border-bottom: none; }
+.kv-key { color: #78716c; }
+.kv-val { font-weight: 600; }
+
+/* Finance module */
+.finance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 1100px) { .finance-grid { grid-template-columns: 1fr; } }
+.fin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.fin-table th { text-align: left; padding: 10px 14px; background: #f5f5f4; color: #57534e; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; border-bottom: 1px solid #e7e5e4; }
+.fin-table td { padding: 10px 14px; border-bottom: 1px solid #f5f5f4; vertical-align: middle; }
+.fin-table tr:last-child td { border-bottom: none; }
+.fin-table tr:hover td { background: #fafaf9; }
+.fin-table .amt { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; white-space: nowrap; }
+.fin-table .action-col { text-align: right; }
+.fin-empty { padding: 24px 16px; text-align: center; color: #a8a29e; font-size: 12px; }
+.status-pill { display: inline-block; padding: 2px 8px; border-radius: 8px; font-size: 10px; font-weight: 700; letter-spacing: 0.02em; }
+.status-unpaid, .status-overdue { background: #fef2f2; color: #b91c1c; }
+.status-scheduled { background: #fffbeb; color: #b45309; }
+.status-paid { background: #dcfce7; color: #166534; }
+.status-sent { background: #eff6ff; color: #1e40af; }
+.status-draft { background: #f5f5f4; color: #78716c; }
+.row-action { font-size: 11px; padding: 4px 10px; border: 1px solid #d6d3d1; background: #fff; border-radius: 4px; font-weight: 600; cursor: pointer; font-family: inherit; }
+.row-action.primary { background: #1c1917; color: #fafaf9; border-color: #1c1917; }
+.row-action.primary:hover { background: #44403c; }
+.row-action:hover { border-color: #1c1917; }
+.cash-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+.cash-tile { background: #fff; border: 1px solid #e7e5e4; border-radius: 8px; padding: 14px 16px; }
+.cash-tile-label { font-size: 10px; font-weight: 700; color: #78716c; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 4px; }
+.cash-tile-val { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cash-tile-sub { font-size: 11px; color: #78716c; margin-top: 2px; }
+.cash-tile.warn .cash-tile-val { color: #b45309; }
+.cash-tile.bad .cash-tile-val { color: #b91c1c; }
+.trust-banner { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; padding: 8px 12px; border-radius: 6px; font-size: 11px; margin-bottom: 14px; display: flex; gap: 8px; align-items: center; }
+.trust-banner strong { font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">S</div>
+      <div class="brand-name">StartupOS</div>
+    </div>
+
+    <div class="nav-group-label">Workspace</div>
+    <div class="nav-item" data-view="cockpit"><span class="nav-dot"></span> Cockpit</div>
+
+    <div class="nav-group-label">Modules</div>
+    <div class="nav-item active" data-view="sales"><span class="nav-dot"></span> Sales</div>
+    <div class="nav-item" data-view="marketing"><span class="nav-dot"></span> Marketing</div>
+    <div class="nav-item" data-view="build"><span class="nav-dot"></span> Build</div>
+    <div class="nav-item" data-view="finance"><span class="nav-dot"></span> Finance</div>
+    <div class="nav-item stub" data-view="commerce"><span class="nav-dot"></span> Commerce</div>
+    <div class="nav-item" data-view="customers"><span class="nav-dot"></span> Customers</div>
+    <div class="nav-item stub" data-view="research"><span class="nav-dot"></span> Research</div>
+    <div class="nav-item" data-view="social"><span class="nav-dot"></span> Social</div>
+    <div class="nav-item" data-view="web"><span class="nav-dot"></span> Web</div>
+    <div class="nav-item" data-view="security"><span class="nav-dot"></span> IT &amp; Security</div>
+
+    <div class="sidebar-foot">
+      <div>Memory v0 — localStorage</div>
+      <div style="margin-top:4px"><span id="mem-status">●</span> Synced</div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+    <div class="topbar">
+      <div class="topbar-title" id="page-title">Sales</div>
+      <div class="topbar-crumb" id="page-crumb">Outbound · powered by UnitOne GTM</div>
+      <div class="topbar-spacer"></div>
+      <button class="connect-btn" id="apollo-btn" title="Apollo data flows through your Azure VM cron jobs; MCP optional">⚡ Apollo via Azure VM</button>
+      <button class="connect-btn done" id="posthog-btn" title="PostHog MCP authenticated">✓ PostHog connected</button>
+      <span class="cmd-hint"><kbd>⌘</kbd> <kbd>K</kbd></span>
+    </div>
+
+    <div class="content" id="content">
+      <!-- SALES VIEW (default) -->
+      <div class="view" id="view-sales">
+        <!-- STARTUP MEMORY -->
+        <div class="card memory-card">
+          <div class="card-header">
+            <div class="card-title">Startup Memory <span class="accent">/ retrieved into Sales</span></div>
+            <span class="tag" id="mem-version">v0</span>
+            <div style="margin-left:auto"></div>
+            <button class="btn btn-ghost" id="edit-memory-btn">Edit memory</button>
+          </div>
+          <div class="card-body">
+            <div class="memory-grid">
+              <div class="memory-slice">
+                <div class="memory-slice-label">Identity <span class="pill">always</span></div>
+                <div class="memory-slice-content" id="mem-identity">—</div>
+              </div>
+              <div class="memory-slice">
+                <div class="memory-slice-label">ICP <span class="pill">sales</span></div>
+                <div class="memory-slice-content" id="mem-icp">—</div>
+              </div>
+              <div class="memory-slice">
+                <div class="memory-slice-label">Brand voice <span class="pill">writing</span></div>
+                <div class="memory-slice-content" id="mem-voice">—</div>
+              </div>
+              <div class="memory-slice">
+                <div class="memory-slice-label">Pricing &amp; offer <span class="pill">sales</span></div>
+                <div class="memory-slice-content" id="mem-pricing">—</div>
+              </div>
+            </div>
+            <div class="ask-bar">
+              <span class="muted">🜲</span>
+              <input id="ask-input" placeholder="Ask the OS — e.g. 'What's our pitch to a VP Eng at a Series B SaaS company?'" />
+              <button id="ask-btn">Ask</button>
+            </div>
+            <div id="ask-output" style="display:none; margin-top:12px; padding:12px 14px; background:#fafaf9; border-radius:6px; border:1px solid #e7e5e4; font-size:12px; line-height:1.6; white-space:pre-wrap;"></div>
+          </div>
+          <div class="card-foot">
+            Memory is the spine. Every module retrieves a slice on load.
+            <span class="dot-sep">·</span>
+            <span id="mem-last-saved">Never saved this session</span>
+          </div>
+        </div>
+
+        <!-- SALES GRID -->
+        <div class="sales-grid">
+          <!-- LEFT COLUMN -->
+          <div class="col">
+
+            <!-- DAILY PULSE -->
+            <div class="card pulse-card">
+              <div class="card-header">
+                <div class="card-title">Daily Pulse <span class="accent">/ generated from memory + Apollo state</span></div>
+                <div style="margin-left:auto"></div>
+                <button class="btn btn-ghost" id="refresh-pulse">↻ Regenerate</button>
+              </div>
+              <div class="card-body">
+                <div class="pulse-content" id="pulse-content">
+                  <div style="line-height:1.6"><strong>Thu Sep 3.</strong> JCI asked for JSON issue reports on Josh's fixes (UNI-160, Sep 1) — that's the only active POC, prioritize it today. UNI-158 (24-min graph builds) is High and unassigned; Alexey is the obvious owner. JCI Alts wave 2.0 has sat in draft since Jun 3 with 18 scored accounts — approve Tier 1 or kill it. Cash is $517 with $0 outflow this month; last inbound wire Jul 16.</div><div class="small muted" style="margin-top:6px">Snapshot pulse · <strong>Regenerate</strong> re-drafts live inside Cowork</div>
+                </div>
+                <div class="pulse-meta">
+                  <span class="pulse-pill hot">3 HOT</span>
+                  <span class="pulse-pill warm">5 WARM</span>
+                  <span class="pulse-pill cool">12 COOL</span>
+                  <span class="muted">· 841 contacts across 3 sequences</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- SEQUENCES -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Active Sequences <span class="accent">/ Apollo</span></div>
+                <div style="margin-left:auto"></div>
+                <span class="small muted" id="apollo-state">Apollo connector down at snapshot · last known state (Apr 3) · refresh from Azure VM pending</span>
+              </div>
+              <div class="card-body">
+                <div class="seq-list" id="seq-list"></div>
+                <div class="chart-wrap" style="margin-top:14px"><canvas id="seq-chart"></canvas></div>
+              </div>
+              <div class="card-foot">
+                Source of truth: <span class="muted">~/unitone-gtm/ on Azure VM · cron runs M-F</span>
+              </div>
+            </div>
+
+            <!-- DRAFT CAMPAIGNS -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Draft Campaigns <span class="accent">/ awaiting approval</span></div>
+                <div style="margin-left:auto"></div>
+                <span class="small muted">Nothing sends without you</span>
+              </div>
+              <div class="card-body">
+                <div id="campaign-list"></div>
+              </div>
+              <div class="card-foot">
+                Drafted overnight · review and approve in the morning · per StartupOS trust contract
+              </div>
+            </div>
+
+            <!-- WORKFLOWS -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Workflows <span class="accent">/ gtm-engine skills</span></div>
+                <div style="margin-left:auto"></div>
+                <span class="small muted">9 ready</span>
+              </div>
+              <div class="card-body">
+                <div class="workflow-grid" id="workflow-grid"></div>
+              </div>
+              <div class="card-foot">
+                Each workflow opens in chat — you approve, the agent executes.
+              </div>
+            </div>
+
+          </div>
+
+          <!-- RIGHT COLUMN -->
+          <div class="col">
+
+            <!-- POSTHOG LIVE -->
+            <div class="card" id="posthog-card">
+              <div class="card-header">
+                <div class="card-title">PostHog <span class="accent">/ live</span></div>
+                <div style="margin-left:auto"></div>
+                <span class="small muted" id="ph-status">Loading…</span>
+              </div>
+              <div class="card-body">
+                <div id="ph-banner" style="display:none; padding: 10px 12px; background: #fef3c7; border: 1px solid #fde68a; border-radius: 6px; margin-bottom: 12px; font-size: 12px; color: #92400e;"></div>
+                <div id="ph-meta" style="margin-bottom:12px"></div>
+                <div style="font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#44403c;margin-bottom:6px">Dashboards</div>
+                <div id="ph-dashboards" class="muted small">—</div>
+                <div style="font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#44403c;margin: 12px 0 6px">Insights (top 6)</div>
+                <div id="ph-insights" class="muted small">—</div>
+                <div class="chart-wrap" style="margin-top:14px; height:140px"><canvas id="ph-chart"></canvas></div>
+              </div>
+              <div class="card-foot">
+                <span id="ph-org-line">PostHog: querying organizations…</span>
+              </div>
+            </div>
+
+            <!-- ENGAGEMENT SIGNALS -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Engagement Signals <span class="accent">/ from watcher</span></div>
+                <div style="margin-left:auto"></div>
+                <span class="small muted" id="signals-state">Last poll: 8:00 AM ET (Azure VM cron)</span>
+              </div>
+              <div class="card-body" style="padding:0">
+                <div id="signal-list"></div>
+              </div>
+              <div class="card-foot">
+                <span>🔴 Reply · 🟠 Click · 🟡 Multi-open · ⚪ Bounce</span>
+                <span class="dot-sep">·</span>
+                <span class="muted">engagement_watcher.py polls 3×/day on Azure VM</span>
+              </div>
+            </div>
+
+            <!-- APPROVE QUEUE -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Approve Queue <span class="accent">/ drafts ready</span></div>
+                <div style="margin-left:auto"></div>
+                <span class="small muted">Nothing sends without you</span>
+              </div>
+              <div class="card-body">
+                <div id="approve-list"></div>
+              </div>
+              <div class="card-foot">
+                Trust contract: every send, post, code change, or money move is shown to you first.
+              </div>
+            </div>
+
+            <!-- INFRA HEALTH -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Infrastructure</div>
+                <div style="margin-left:auto"></div>
+                <span class="small" style="color:#16a34a">● All systems normal</span>
+              </div>
+              <div class="card-body">
+                <div class="kv-row"><span class="kv-key">Azure VM</span><span class="kv-val">azureuser@20.106.244.178</span></div>
+                <div class="kv-row"><span class="kv-key">Cron jobs running</span><span class="kv-val">7 of 7</span></div>
+                <div class="kv-row"><span class="kv-key">Last enrollment run</span><span class="kv-val">Today 7:00 AM ET</span></div>
+                <div class="kv-row"><span class="kv-key">Last health report</span><span class="kv-val">Yesterday 5:00 PM ET</span></div>
+                <div class="kv-row"><span class="kv-key">Daily Slack alerts</span><span class="kv-val">3× / day</span></div>
+                <div class="kv-row"><span class="kv-key">Friday attribution</span><span class="kv-val">Multi-channel, scheduled</span></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- COCKPIT VIEW -->
+      <div class="view" id="view-cockpit" style="display:none">
+        <div class="card memory-card">
+          <div class="card-header">
+            <div class="card-title">Cockpit <span class="accent">/ everything-on-one-screen</span></div>
+          </div>
+          <div class="card-body">
+            <div class="memory-grid">
+              <div class="memory-slice"><div class="memory-slice-label">Today's pulse</div><div class="memory-slice-content">3 things need you: JCI JSON-reports ask · UNI-158 unassigned (High) · JCI Alts wave 2.0 awaiting approval</div></div>
+              <div class="memory-slice"><div class="memory-slice-label">Health score</div><div class="memory-slice-content"><strong style="font-size:18px">72</strong> <span class="muted small">/100 · v0 heuristic · 5 urgent/high issues, 1 campaign stalled</span></div></div>
+              <div class="memory-slice"><div class="memory-slice-label">Cash-in · 90d</div><div class="memory-slice-content"><strong>$18.0k</strong> <span class="muted small">· 4 wires · last Jul 16 · Brex</span></div></div>
+              <div class="memory-slice"><div class="memory-slice-label">Pipeline</div><div class="memory-slice-content"><strong>1 POC</strong> <span class="muted small">· JCI · 18 scored targets queued</span></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Module quick-glance</div></div>
+          <div class="card-body">
+            <div class="memory-grid">
+              <div class="memory-slice"><div class="memory-slice-label">Sales</div><div class="memory-slice-content">841 contacts · 3 sequences · 1 campaign awaiting approval · <a href="#" data-view-link="sales">Open →</a></div></div>
+              <div class="memory-slice"><div class="memory-slice-label">Finance</div><div class="memory-slice-content">$517 cash · 9 bills all paid via Brex · last wire Jul 16 · <a href="#" data-view-link="finance">Open →</a></div></div>
+              <div class="memory-slice"><div class="memory-slice-label">Build</div><div class="memory-slice-content">31 open issues · 5 urgent/high · 3 prod deploys READY · <a href="#" data-view-link="build">Open →</a></div></div>
+              <div class="memory-slice"><div class="memory-slice-label">Customers</div><div class="memory-slice-content">JCI POC active · 2 open asks · 6 accounts tracked · <a href="#" data-view-link="customers">Open →</a></div></div>
+              <div class="memory-slice"><div class="memory-slice-label">Marketing</div><div class="memory-slice-content">4 live pages · JCI Alts wave 2.0 in draft · analytics off · <a href="#" data-view-link="marketing">Open →</a></div></div>
+              <div class="memory-slice"><div class="memory-slice-label">Web</div><div class="memory-slice-content">unitone.ai READY · 20 deploys · last Apr 7 · <a href="#" data-view-link="web">Open →</a></div></div>
+              <div class="memory-slice"><div class="memory-slice-label">Social</div><div class="memory-slice-content">61 DMs queued · 2 posts ready · <a href="#" data-view-link="social">Open →</a></div></div>
+              <div class="memory-slice"><div class="memory-slice-label">IT &amp; Security</div><div class="memory-slice-content">1 scan · 2 investigations · SOC2 not started · <a href="#" data-view-link="security">Open →</a></div></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STUB VIEWS -->
+      <div class="view" id="view-marketing" style="display:none">
+        <div class="card"><div class="card-body"><div class="stub-screen">
+          <div class="stub-icon">✶</div>
+          <div class="stub-title">Marketing module — coming in Phase 2</div>
+          <div class="stub-sub">Wired to Ahrefs, Semrush, GA4, Klaviyo, HubSpot, Canva, and Figma MCPs. Brand voice retrieved from Startup Memory; brand-drift detector on every draft.</div>
+          <div class="stub-features">
+            <div>Content calendar with status pipeline</div>
+            <div>Brand voice enforcement on every draft</div>
+            <div>SEO opportunity radar (competitor gap analysis)</div>
+            <div>Reactive content engine (competitor news → draft response)</div>
+            <div>Per-channel social composer (X, LinkedIn, Instagram)</div>
+          </div>
+        </div></div></div>
+      </div>
+
+      <div class="view" id="view-build" style="display:none">
+        <div class="card"><div class="card-body"><div class="stub-screen">
+          <div class="stub-icon">◇</div>
+          <div class="stub-title">Build module — coming in Phase 2</div>
+          <div class="stub-sub">Wired to GitHub, Linear, PagerDuty, and Sentry MCPs. Roadmap auto-reconciles with Linear initiatives/cycles/milestones (Linear MCP shipped Feb 2026).</div>
+          <div class="stub-features">
+            <div>Roadmap that auto-syncs with Linear state</div>
+            <div>Surveillance-free engineer-week summaries from PR/commit activity</div>
+            <div>Incident postmortem → tracked Linear action items with SLAs</div>
+            <div>Release notes generator from merged PRs</div>
+          </div>
+        </div></div></div>
+      </div>
+
+      <div class="view" id="view-finance" style="display:none">
+        <!-- MEMORY MINI -->
+        <div class="card memory-card">
+          <div class="card-header">
+            <div class="card-title">Startup Memory <span class="accent">/ retrieved into Finance</span></div>
+            <span class="tag">v0</span>
+            <span class="small muted" id="fin-refresh-status" style="margin-left:8px">—</span>
+            <div style="margin-left:auto"></div>
+            <button class="btn btn-primary" id="refresh-brex-top" style="font-size:11px; padding:5px 10px">↻ Refresh from Brex</button>
+            <button class="btn btn-ghost" id="edit-cash-btn">Update cash</button>
+            <button class="btn btn-ghost" id="edit-memory-btn-2">Edit memory</button>
+          </div>
+          <div class="card-body">
+            <div class="trust-banner">
+              <span>🔒</span>
+              <div><strong>Trust contract:</strong> StartupOS never moves money. Every "Pay" action marks the bill scheduled and opens Brex Bill Pay in a new tab — you click Pay yourself in Brex's own UI.</div>
+            </div>
+            <div class="cash-strip">
+              <div class="cash-tile" id="ct-cash"><div class="cash-tile-label">Cash on hand</div><div class="cash-tile-val">—</div><div class="cash-tile-sub">—</div></div>
+              <div class="cash-tile" id="ct-burn"><div class="cash-tile-label">Monthly burn</div><div class="cash-tile-val">—</div><div class="cash-tile-sub">—</div></div>
+              <div class="cash-tile" id="ct-runway"><div class="cash-tile-label">Runway</div><div class="cash-tile-val">—</div><div class="cash-tile-sub">—</div></div>
+              <div class="cash-tile" id="ct-mtd"><div class="cash-tile-label">Received MTD</div><div class="cash-tile-val">—</div><div class="cash-tile-sub">—</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- FINANCE GRID -->
+        <div class="finance-grid">
+          <!-- AP -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Vendor Bills <span class="accent">/ AP</span></div>
+              <div style="margin-left:auto"></div>
+              <span class="small muted" id="ap-summary">—</span>
+            </div>
+            <div class="card-body" style="padding:0">
+              <table class="fin-table" id="bills-table"></table>
+            </div>
+            <div class="card-foot">
+              <button class="btn" id="add-bill-btn">+ Add bill</button>
+              <button class="btn" id="open-brex-billpay-btn">↗ Open Brex Bill Pay</button>
+              <span style="margin-left:auto" class="small muted">Live from Brex · all amounts in account currency</span>
+            </div>
+          </div>
+
+          <!-- AR -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Customer Invoices <span class="accent">/ AR</span></div>
+              <div style="margin-left:auto"></div>
+              <span class="small muted" id="ar-summary">—</span>
+            </div>
+            <div class="card-body" style="padding:0">
+              <table class="fin-table" id="invoices-table"></table>
+            </div>
+            <div class="card-foot">
+              <button class="btn" id="add-invoice-btn">+ Issue invoice</button>
+              <span style="margin-left:auto" class="small muted">Stripe MCP coming next iteration · auto-populates AR</span>
+            </div>
+          </div>
+
+          <!-- PAYMENTS -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Incoming Funds <span class="accent">/ who paid you</span></div>
+              <div style="margin-left:auto"></div>
+              <span class="small muted" id="payments-summary">—</span>
+            </div>
+            <div class="card-body" style="padding:0">
+              <table class="fin-table" id="payments-table"></table>
+            </div>
+            <div class="card-foot">
+              <button class="btn" id="add-payment-btn">+ Log payment received</button>
+              <span style="margin-left:auto" class="small muted">Live from Brex banking · positive wires only</span>
+            </div>
+          </div>
+
+          <!-- BREX CARD -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Brex <span class="accent">/ card activity</span></div>
+              <div style="margin-left:auto"></div>
+              <span class="small muted" id="brex-status">Not connected</span>
+            </div>
+            <div class="card-body">
+              <div id="brex-content">
+                <div class="stub-screen" style="padding: 30px 12px">
+                  <div class="stub-icon">⚡</div>
+                  <div class="stub-title" style="font-size:13px">Brex MCP not connected</div>
+                  <div class="stub-sub" style="font-size:12px">Click <strong>Connect</strong> on the Brex card in chat to authenticate. Once connected, this panel loads card transactions, expenses, and limits via the official Brex MCP at <code>api.brex.com/mcp</code>.</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-foot">
+              <button class="btn" id="connect-brex-btn">↻ Refresh from Brex</button>
+              <button class="btn" onclick="window.open('https://dashboard.brex.com', '_blank')">↗ Open Brex dashboard</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="view" id="view-commerce" style="display:none">
+        <div class="card"><div class="card-body"><div class="stub-screen">
+          <div class="stub-icon">⌥</div>
+          <div class="stub-title">Commerce module — coming in Phase 2</div>
+          <div class="stub-sub">Unified subscription ledger across Stripe, Shopify, Chargebee, App Store, and Play. Square and Recurly via Pipedream until official MCPs ship.</div>
+          <div class="stub-features">
+            <div>One cancel/upgrade/refund view across all providers</div>
+            <div>Agentic dunning — propose decisions based on customer history</div>
+            <div>Top-customer payment-failure alerts</div>
+            <div>Dispute evidence auto-pulled (Stripe events + customer comms)</div>
+          </div>
+        </div></div></div>
+      </div>
+
+      <div class="view" id="view-customers" style="display:none">
+        <div class="card"><div class="card-body"><div class="stub-screen"><div class="stub-icon">⊙</div><div class="stub-title">Customers — Phase 3</div><div class="stub-sub">Account 360, NPS, support themes. Intercom + Front + Zendesk MCPs.</div></div></div></div>
+      </div>
+      <div class="view" id="view-research" style="display:none">
+        <div class="card"><div class="card-body"><div class="stub-screen"><div class="stub-icon">⌕</div><div class="stub-title">Research — Phase 3</div><div class="stub-sub">Interview transcripts, theme synthesis, JTBD personas feeding back into ICP memory.</div></div></div></div>
+      </div>
+      <div class="view" id="view-social" style="display:none">
+        <div class="card"><div class="card-body"><div class="stub-screen"><div class="stub-icon">◐</div><div class="stub-title">Social — Phase 3</div><div class="stub-sub">Per-channel composer, mentions feed, content recycling.</div></div></div></div>
+      </div>
+      <div class="view" id="view-web" style="display:none">
+        <div class="card"><div class="card-body"><div class="stub-screen"><div class="stub-icon">◰</div><div class="stub-title">Web — Phase 3</div><div class="stub-sub">Landing page deploys, A/B tests, on-page SEO sync to brand voice memory.</div></div></div></div>
+      </div>
+      <div class="view" id="view-security" style="display:none">
+        <div class="card"><div class="card-body"><div class="stub-screen"><div class="stub-icon">⌬</div><div class="stub-title">IT &amp; Security — Phase 3</div><div class="stub-sub">SSO, audit log, SOC2 evidence pipeline. Critical for selling above Series A.</div></div></div></div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<!-- MEMORY EDIT MODAL -->
+<div class="modal-overlay" id="memory-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">Edit Startup Memory</div>
+      <button class="modal-close" id="memory-close">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="field"><label class="field-label">Company name</label><input id="mf-name" /></div>
+      <div class="field"><label class="field-label">One-line mission</label><input id="mf-mission" /></div>
+      <div class="field"><label class="field-label">Elevator pitch</label><textarea id="mf-pitch"></textarea></div>
+      <div class="field"><label class="field-label">ICP — who you sell to</label><textarea id="mf-icp"></textarea></div>
+      <div class="field"><label class="field-label">Brand voice — tone &amp; do/don'ts</label><textarea id="mf-voice"></textarea></div>
+      <div class="field"><label class="field-label">Pricing &amp; offer</label><textarea id="mf-pricing"></textarea></div>
+      <div class="field"><label class="field-label">Founder / team note</label><textarea id="mf-team"></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="memory-cancel">Cancel</button>
+      <button class="btn btn-primary" id="memory-save">Save to memory</button>
+    </div>
+  </div>
+</div>
+
+<!-- WORKFLOW PREVIEW MODAL -->
+<div class="modal-overlay" id="wf-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="wf-title">Workflow</div>
+      <button class="modal-close" id="wf-close">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="wf-body"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="wf-cancel">Close</button>
+      <button class="btn btn-primary" id="wf-run">Run in chat</button>
+    </div>
+  </div>
+</div>
+
+<!-- BILL MODAL -->
+<div class="modal-overlay" id="bill-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="bill-modal-title">Add bill</div>
+      <button class="modal-close" data-modal-close="bill-modal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="field"><label class="field-label">Vendor</label><input id="bf-vendor" placeholder="AWS, Vercel, contractor, etc." /></div>
+      <div class="field"><label class="field-label">Amount (USD)</label><input id="bf-amount" type="number" step="0.01" placeholder="0.00" /></div>
+      <div class="field"><label class="field-label">Due date</label><input id="bf-due" type="date" /></div>
+      <div class="field"><label class="field-label">Category</label><input id="bf-category" placeholder="infra, saas, contractor, legal, etc." /></div>
+      <div class="field"><label class="field-label">Pay URL (optional — defaults to Brex Bill Pay)</label><input id="bf-payurl" placeholder="https://dashboard.brex.com/billpay" /></div>
+      <div class="field"><label class="field-label">Notes</label><textarea id="bf-notes" placeholder="What's this bill for?"></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-modal-close="bill-modal">Cancel</button>
+      <button class="btn btn-primary" id="bill-save-btn">Save bill</button>
+    </div>
+  </div>
+</div>
+
+<!-- INVOICE MODAL -->
+<div class="modal-overlay" id="invoice-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">Issue invoice</div>
+      <button class="modal-close" data-modal-close="invoice-modal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="field"><label class="field-label">Customer</label><input id="if-customer" placeholder="Acme Corp" /></div>
+      <div class="field"><label class="field-label">Customer email</label><input id="if-email" type="email" placeholder="billing@acme.com" /></div>
+      <div class="field"><label class="field-label">Amount (USD)</label><input id="if-amount" type="number" step="0.01" placeholder="0.00" /></div>
+      <div class="field"><label class="field-label">Issue date</label><input id="if-issue" type="date" /></div>
+      <div class="field"><label class="field-label">Due date</label><input id="if-due" type="date" /></div>
+      <div class="field"><label class="field-label">Notes</label><textarea id="if-notes" placeholder="Pilot fee · Q3 site · etc."></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-modal-close="invoice-modal">Cancel</button>
+      <button class="btn btn-primary" id="invoice-save-btn">Save as draft</button>
+    </div>
+  </div>
+</div>
+
+<!-- PAYMENT MODAL -->
+<div class="modal-overlay" id="payment-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">Log payment received</div>
+      <button class="modal-close" data-modal-close="payment-modal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="field"><label class="field-label">Payer (customer)</label><input id="pf-payer" placeholder="Acme Corp" /></div>
+      <div class="field"><label class="field-label">Amount (USD)</label><input id="pf-amount" type="number" step="0.01" placeholder="0.00" /></div>
+      <div class="field"><label class="field-label">Date received</label><input id="pf-date" type="date" /></div>
+      <div class="field"><label class="field-label">Method</label>
+        <select id="pf-method" style="width:100%; padding: 8px 10px; border: 1px solid #d6d3d1; border-radius: 5px; font-size: 12px;">
+          <option value="wire">Wire</option><option value="ach">ACH</option><option value="card">Card</option>
+          <option value="check">Check</option><option value="stripe">Stripe</option><option value="other">Other</option>
+        </select>
+      </div>
+      <div class="field"><label class="field-label">Linked invoice ID (optional)</label><input id="pf-invoice" placeholder="i001" /></div>
+      <div class="field"><label class="field-label">Notes</label><textarea id="pf-notes"></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-modal-close="payment-modal">Cancel</button>
+      <button class="btn btn-primary" id="payment-save-btn">Log payment</button>
+    </div>
+  </div>
+</div>
+
+<!-- CASH POSITION MODAL -->
+<div class="modal-overlay" id="cash-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">Update cash position</div>
+      <button class="modal-close" data-modal-close="cash-modal">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="field"><label class="field-label">Cash on hand (USD)</label><input id="cf-cash" type="number" step="0.01" placeholder="0.00" /></div>
+      <div class="field"><label class="field-label">Monthly burn (USD)</label><input id="cf-burn" type="number" step="0.01" placeholder="0.00" /></div>
+      <div class="small muted">Both are manual entries today. Mercury MCP (read-only) will compute these from real bank balances in a future iteration.</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" data-modal-close="cash-modal">Cancel</button>
+      <button class="btn btn-primary" id="cash-save-btn">Save to memory</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast">Saved</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────
+// MEMORY STORE — the spine of StartupOS
+// ─────────────────────────────────────────────────────────────────────
+const MEMORY_KEY = 'startupos_memory_v1';
+
+const DEFAULT_MEMORY = {
+  identity: {
+    name: 'UnitOne',
+    mission: 'Autonomous security remediation for industrial and operational technology.',
+    pitch: 'UnitOne is the autonomous security operator for OT/BAS environments. We turn CVE backlogs and CRA compliance evidence into closed loops — so security teams stop drowning in tickets and start shipping fixes.'
+  },
+  icp: {
+    primary: 'OT/BAS-heavy enterprises (manufacturing, building automation, energy). 1,000+ employees. CISO + VP Eng + Compliance Lead as buying committee.',
+    accounts: 'Emerson, Schneider, Honeywell, Siemens, JCI, Niagara ecosystem',
+    intent_signals: 'CRA-readiness posts, CVE backlog mentions, Niagara/Tridium engineer hires'
+  },
+  voice: {
+    tone: 'Direct, technical, never marketing-fluffy. Earn the engineer\'s respect first; the buyer follows.',
+    do: 'Lead with specifics — CVE counts, exact compliance dates, named systems.',
+    dont: 'Avoid: "AI-powered insights", "transform your security posture", any consultant-speak.'
+  },
+  pricing: {
+    offer: 'Free CVE triage on first 50 assets · $2k/mo per site after · CRA evidence pack included',
+    notes: 'Annual contracts preferred; quarterly OK for design partners.'
+  },
+  team: {
+    founders: 'Kamal (CEO/eng), advisors at Microsoft/Oracle/Meta/Lyft.',
+    aors: 'Kamal owns product, eng, GTM. Advisor network for warm intros.'
+  },
+  decisions: [
+    { date: '2026-04-03', text: 'Migrated GTM cron jobs from Cowork to Azure VM (sandbox can\'t reach Apollo/Slack APIs).' },
+    { date: '2026-04-01', text: 'Deployed PostHog cookieless for closed-loop attribution.' },
+    { date: '2026-05-27', text: 'Decided StartupOS = memory-centric founder OS, Sales module wraps UnitOne GTM.' }
+  ],
+  finance: {
+    cashOnHand: 0,
+    burnRate: 0,
+    bills: [],        // Manual additions only — Brex bills loaded live
+    invoices: [],     // AR — manual until Stripe connects
+    payments: []      // Manual additions — banking wires loaded live from Brex
+  }
+};
+
+function loadMemory() {
+  try {
+    const raw = localStorage.getItem(MEMORY_KEY);
+    if (!raw) return structuredClone(DEFAULT_MEMORY);
+    const m = JSON.parse(raw);
+    // Backfill finance slice if migrating from v1
+    if (!m.finance) m.finance = structuredClone(DEFAULT_MEMORY.finance);
+    if (!Array.isArray(m.finance.bills)) m.finance.bills = [];
+    if (!Array.isArray(m.finance.invoices)) m.finance.invoices = [];
+    if (!Array.isArray(m.finance.payments)) m.finance.payments = [];
+    // Migration: wipe v1 seed bills so live Brex data is the source of truth
+    const seedIds = ['b001','b002','b003','b004','b005'];
+    if (m.finance.bills.some(b => seedIds.includes(b.id))) {
+      m.finance.bills = m.finance.bills.filter(b => !seedIds.includes(b.id));
+    }
+    if (m.finance.invoices.some(i => i.id === 'i001')) {
+      m.finance.invoices = m.finance.invoices.filter(i => i.id !== 'i001');
+    }
+    return m;
+  } catch (e) {
+    return structuredClone(DEFAULT_MEMORY);
+  }
+}
+
+function saveMemory(m) {
+  localStorage.setItem(MEMORY_KEY, JSON.stringify(m));
+  document.getElementById('mem-last-saved').textContent = 'Saved ' + new Date().toLocaleTimeString();
+  document.getElementById('mem-status').style.color = '#22c55e';
+  renderMemory();
+  showToast('Memory saved · all modules will retrieve the new state');
+}
+
+let memory = loadMemory();
+
+function renderMemory() {
+  document.getElementById('mem-identity').innerHTML =
+    '<strong>' + escapeHtml(memory.identity.name) + '</strong><br>' +
+    '<span class="muted small">' + escapeHtml(memory.identity.mission) + '</span>';
+  document.getElementById('mem-icp').innerHTML =
+    escapeHtml(memory.icp.primary).slice(0, 120) + (memory.icp.primary.length > 120 ? '…' : '');
+  document.getElementById('mem-voice').innerHTML =
+    escapeHtml(memory.voice.tone).slice(0, 120) + (memory.voice.tone.length > 120 ? '…' : '');
+  document.getElementById('mem-pricing').innerHTML =
+    escapeHtml(memory.pricing.offer).slice(0, 120) + (memory.pricing.offer.length > 120 ? '…' : '');
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// SEQUENCES — last known from UnitOne GTM (Apollo MCP will replace when authed)
+// ─────────────────────────────────────────────────────────────────────
+const SEQUENCES = [
+  { id: 'vpeng', name: 'VP Engineering', status: 'active', contacts: 42, delivered: 37, opened: 10, clicked: 0, replied: 0, bounced: 5 },
+  { id: 'ctov2', name: 'CTO v2', status: 'active', contacts: 36, delivered: 36, opened: 0, clicked: 0, replied: 0, bounced: 0 },
+  { id: 'craot',  name: 'CRA OT/BAS', status: 'active', contacts: 763, delivered: 200, opened: 24, clicked: 3, replied: 1, bounced: 18 }
+];
+
+function renderSequences() {
+  const list = document.getElementById('seq-list');
+  list.innerHTML = SEQUENCES.map(s => {
+    const openRate = s.delivered ? Math.round(s.opened / s.delivered * 100) : 0;
+    const bounceRate = s.delivered ? Math.round(s.bounced / s.delivered * 100) : 0;
+    return `
+      <div class="seq-row">
+        <div class="seq-head">
+          <div class="seq-name">${escapeHtml(s.name)}</div>
+          <div class="seq-status ${s.status}">${s.status.toUpperCase()}</div>
+        </div>
+        <div class="seq-stats">
+          <div><div class="seq-stat-num">${s.contacts}</div><div class="seq-stat-label">Contacts</div></div>
+          <div><div class="seq-stat-num">${s.delivered}</div><div class="seq-stat-label">Delivered</div></div>
+          <div><div class="seq-stat-num">${openRate}%</div><div class="seq-stat-label">Open</div></div>
+          <div><div class="seq-stat-num">${s.replied}</div><div class="seq-stat-label">Replied</div></div>
+          <div><div class="seq-stat-num" style="color:${bounceRate > 10 ? '#b91c1c' : '#1c1917'}">${bounceRate}%</div><div class="seq-stat-label">Bounce</div></div>
+        </div>
+      </div>`;
+  }).join('');
+
+  // Chart
+  const ctx = document.getElementById('seq-chart');
+  if (ctx._chart) ctx._chart.destroy();
+  if (typeof Chart === 'undefined') return;
+  ctx._chart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: SEQUENCES.map(s => s.name),
+      datasets: [
+        { label: 'Delivered', data: SEQUENCES.map(s => s.delivered), backgroundColor: '#1c1917' },
+        { label: 'Opened',    data: SEQUENCES.map(s => s.opened),    backgroundColor: '#a16207' },
+        { label: 'Replied',   data: SEQUENCES.map(s => s.replied),   backgroundColor: '#16a34a' },
+        { label: 'Bounced',   data: SEQUENCES.map(s => s.bounced),   backgroundColor: '#b91c1c' }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { y: { beginAtZero: true } },
+      plugins: { legend: { labels: { font: { size: 10 } } } }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ENGAGEMENT SIGNALS — would come from engagement_watcher.py
+// ─────────────────────────────────────────────────────────────────────
+// Signal feed is sourced from engagement_watcher.py running on the Azure VM (cron 8am/12pm/5pm ET).
+// No live read path exists yet — signals are delivered to Slack and the Apollo Bill Pay UI.
+// To wire real signals here, we need either: (a) Apollo MCP authenticated, (b) a small read endpoint on the VM
+// exposing the latest engagement CSVs as JSON, or (c) Slack MCP polling the alerts channel.
+const SIGNALS = [];
+
+function renderSignals() {
+  const list = document.getElementById('signal-list');
+  if (SIGNALS.length === 0) {
+    list.innerHTML = `
+      <div style="padding: 24px 16px; text-align: center;">
+        <div style="font-size: 13px; font-weight: 600; color: #1c1917; margin-bottom: 4px;">No live signal feed wired yet</div>
+        <div style="font-size: 11px; color: #78716c; line-height: 1.6; max-width: 360px; margin: 0 auto;">
+          Real engagement signals are flowing into Slack from <code>engagement_watcher.py</code> on the Azure VM (3×/day).
+          To surface them here, we need either Apollo MCP (OAuth keeps failing) or a tiny JSON read endpoint on the VM.
+        </div>
+        <button class="btn" style="margin-top: 12px;" onclick="window.sendPrompt && window.sendPrompt('Build a small Flask endpoint on the Azure VM that exposes the latest engagement_watcher state as JSON, so the StartupOS Sales module can read live signals without depending on Apollo MCP.')">Wire VM read endpoint →</button>
+      </div>`;
+    return;
+  }
+  list.innerHTML = SIGNALS.map(s => {
+    const iconMap = { reply: '🔴', click: '🟠', open: '🟡', bounce: '⚪' };
+    return `
+      <div class="signal-row">
+        <div class="signal-icon ${s.type}">${iconMap[s.type]}</div>
+        <div class="signal-body">
+          <div class="signal-title">${escapeHtml(s.name)} <span class="muted small">— ${escapeHtml(s.role)}</span></div>
+          <div class="signal-meta">${escapeHtml(s.detail)} · ${s.when}</div>
+        </div>
+        ${s.type !== 'bounce' ? `<button class="signal-action" data-signal-type="${s.type}" data-signal-name="${escapeHtml(s.name)}">Respond →</button>` : ''}
+      </div>`;
+  }).join('');
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DRAFT CAMPAIGNS — staged for approval, nothing sends until approved
+// ─────────────────────────────────────────────────────────────────────
+const DRAFT_CAMPAIGNS = [
+  {
+    id: 'jci-alts-threat-modeling',
+    name: 'JCI Alts — Automated Threat Modeling',
+    status: 'awaiting approval',
+    persona: 'VP Product Security · VP Engineering',
+    accounts: { tier1: 7, tier2: 7, tier3: 3, hold: 1, total: 18 },
+    touches: '4 emails + 2 LinkedIn over 12 days',
+    hook: 'Live CVEs we have already shown in /spine for your products — Honeywell IQ4x, Niagara, Metasys, BACnet, Lutron Quantum.',
+    briefPath: '/Users/kamal/StartupAgents/campaigns/jci-alts-threat-modeling/brief.md',
+    demoUrl: 'https://unitone-demo.eastus.cloudapp.azure.com/spine',
+    draftedAt: '2026-06-03',
+    approvalSteps: [
+      'Validate target accounts (10 min)',
+      'Read T1 email + edit for voice (5 min)',
+      'Approve LinkedIn connect note (2 min)',
+      'Approve to enroll Tier 1 in Apollo (one button)'
+    ]
+  }
+];
+
+function renderDraftCampaigns() {
+  const el = document.getElementById('campaign-list');
+  if (!el) return;
+  if (DRAFT_CAMPAIGNS.length === 0) {
+    el.innerHTML = '<div class="fin-empty">No draft campaigns waiting on approval.</div>';
+    return;
+  }
+  el.innerHTML = DRAFT_CAMPAIGNS.map(c => `
+    <div style="padding: 14px 16px; border: 1px solid #e7e5e4; border-radius: 8px; background: linear-gradient(180deg, #fffbeb, #fff); margin-bottom: 10px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+        <div>
+          <strong style="font-size: 13px;">${escapeHtml(c.name)}</strong>
+          <span class="status-pill status-draft" style="margin-left: 8px;">${escapeHtml(c.status.toUpperCase())}</span>
+        </div>
+        <span class="small muted">drafted ${escapeHtml(c.draftedAt)}</span>
+      </div>
+      <div class="small muted" style="margin-bottom: 8px; line-height: 1.5;">${escapeHtml(c.hook)}</div>
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px;">
+        <div><div class="small muted" style="font-size:9px; text-transform:uppercase; letter-spacing:0.05em;">Persona</div><div style="font-size:11px; font-weight:600;">${escapeHtml(c.persona)}</div></div>
+        <div><div class="small muted" style="font-size:9px; text-transform:uppercase; letter-spacing:0.05em;">Accounts</div><div style="font-size:11px; font-weight:600;">${c.accounts.total} (${c.accounts.tier1}+${c.accounts.tier2}+${c.accounts.tier3})</div></div>
+        <div><div class="small muted" style="font-size:9px; text-transform:uppercase; letter-spacing:0.05em;">Cadence</div><div style="font-size:11px; font-weight:600;">${escapeHtml(c.touches)}</div></div>
+        <div><div class="small muted" style="font-size:9px; text-transform:uppercase; letter-spacing:0.05em;">On hold</div><div style="font-size:11px; font-weight:600; color: #b45309;">${c.accounts.hold} (Honeywell)</div></div>
+      </div>
+      <div style="display:flex; gap:6px; flex-wrap: wrap;">
+        <button class="row-action primary" data-camp-approve="${c.id}" data-tier="1">✓ Approve Tier 1 (${c.accounts.tier1} accts)</button>
+        <button class="row-action" data-camp-approve="${c.id}" data-tier="2">Approve Tier 2 later</button>
+        <button class="row-action" data-camp-view="${c.id}">Open brief</button>
+        <button class="row-action" data-camp-edit="${c.id}">Edit</button>
+        <button class="row-action" data-camp-demo="${c.id}">Open /spine demo</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function wireDraftCampaigns() {
+  document.addEventListener('click', e => {
+    const approve = e.target.closest('[data-camp-approve]');
+    const view = e.target.closest('[data-camp-view]');
+    const edit = e.target.closest('[data-camp-edit]');
+    const demo = e.target.closest('[data-camp-demo]');
+
+    if (approve) {
+      const c = DRAFT_CAMPAIGNS.find(x => x.id === approve.dataset.campApprove);
+      const tier = approve.dataset.tier;
+      if (c && window.sendPrompt) {
+        window.sendPrompt(`Approve the ${c.id} campaign for Tier ${tier} only. Create the Apollo sequence "JCI Alts — Threat Modeling v1" with the 4 touches from /Users/kamal/StartupAgents/campaigns/jci-alts-threat-modeling/sequence.md. Enroll only the Tier ${tier} accounts from targets.md. Stop before sending anything — keep paused for me to do the final send-go in Apollo myself.`);
+        showToast(`Routed approval request for Tier ${tier} to chat`);
+      } else if (c) {
+        showToast(`To approve, open in Cowork (need sendPrompt). Brief: ${c.briefPath}`);
+      }
+    } else if (view) {
+      const c = DRAFT_CAMPAIGNS.find(x => x.id === view.dataset.campView);
+      if (c) {
+        if (window.sendPrompt) {
+          window.sendPrompt(`Open the campaign brief at ${c.briefPath} for me to review.`);
+        } else {
+          showToast(`Open the file: ${c.briefPath}`);
+        }
+      }
+    } else if (edit) {
+      const c = DRAFT_CAMPAIGNS.find(x => x.id === edit.dataset.campEdit);
+      if (c && window.sendPrompt) {
+        window.sendPrompt(`I want to edit the ${c.id} campaign. Show me the current targets and let me adjust.`);
+      } else if (c) {
+        showToast('Open this in Cowork to edit via chat');
+      }
+    } else if (demo) {
+      const c = DRAFT_CAMPAIGNS.find(x => x.id === demo.dataset.campDemo);
+      if (c) window.open(c.demoUrl, '_blank');
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// WORKFLOWS — 9 gtm-engine skills as approve-before-execute buttons
+// ─────────────────────────────────────────────────────────────────────
+const WORKFLOWS = [
+  { icon: '☀', name: 'Daily Pulse',         skill: 'gtm-daily-pulse',         desc: 'HOT accounts overnight; what to work on today' },
+  { icon: '◐', name: 'Hot Lead Response',   skill: 'gtm-hot-lead-response',   desc: 'Draft a reply to an inbound — accept/object/decline' },
+  { icon: '✚', name: 'New Sequence',        skill: 'gtm-sequence-builder',    desc: 'Multi-touch outbound for a new persona' },
+  { icon: '◆', name: 'Enrich & Score',      skill: 'gtm-enrich-and-score',    desc: 'Apollo enrichment + ICP scoring on a list' },
+  { icon: '⌘', name: 'Warm Intros',         skill: 'gtm-warm-intros',         desc: 'Find high-trust intro paths into an account' },
+  { icon: '⚔', name: 'Competitor Teardown', skill: 'gtm-competitor-teardown', desc: 'Battlecard for a named competitor' },
+  { icon: '✷', name: 'Creative Angles',     skill: 'gtm-creative-angles',     desc: 'Fresh angles when standard pitch isn\'t landing' },
+  { icon: '↻', name: 'State Sync',          skill: 'gtm-state-sync',          desc: 'Reconcile local CSV state with Apollo + CRM' },
+  { icon: '⌗', name: 'Weekly Review',       skill: 'gtm-weekly-review',       desc: 'Roll up the past week — what worked, what didn\'t' }
+];
+
+function renderWorkflows() {
+  const grid = document.getElementById('workflow-grid');
+  grid.innerHTML = WORKFLOWS.map(w => `
+    <button class="wf-btn" data-skill="${w.skill}" data-name="${escapeHtml(w.name)}" data-desc="${escapeHtml(w.desc)}">
+      <div class="wf-icon">${w.icon}</div>
+      <div class="wf-name">${escapeHtml(w.name)}</div>
+      <div class="wf-desc">${escapeHtml(w.desc)}</div>
+    </button>`).join('');
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// APPROVE QUEUE — drafts waiting on you (trust contract demo)
+// ─────────────────────────────────────────────────────────────────────
+// Approve queue is populated by drafts coming from gtm-hot-lead-response / linkedin_followup_queue.
+// No live drafts source until we either wire Apollo MCP or build a read path from the VM CSVs.
+const APPROVALS = [];
+
+function renderApprovals() {
+  const list = document.getElementById('approve-list');
+  if (APPROVALS.length === 0) {
+    list.innerHTML = `
+      <div style="padding: 24px 16px; text-align: center;">
+        <div style="font-size: 13px; font-weight: 600; color: #1c1917; margin-bottom: 4px;">No drafts in queue</div>
+        <div style="font-size: 11px; color: #78716c; line-height: 1.6; max-width: 360px; margin: 0 auto;">
+          When a signal fires (reply, click, multi-open), <code>gtm-hot-lead-response</code> drafts a reply here for you to approve.
+          Currently <code>linkedin_followup_queue.py</code> emits drafts to a CSV on the VM — needs the same read endpoint as signals to surface here.
+        </div>
+      </div>`;
+    return;
+  }
+  list.innerHTML = APPROVALS.map((a, i) => `
+    <div class="approve-row" data-approve-idx="${i}">
+      <div class="approve-head">
+        <div class="approve-type">${a.type}</div>
+        <div class="approve-target">${escapeHtml(a.target)}</div>
+      </div>
+      <div class="approve-preview">${escapeHtml(a.preview)}</div>
+      <div class="approve-actions">
+        <button class="btn btn-approve" data-approve="${i}" data-action="approve">✓ Approve &amp; send</button>
+        <button class="btn btn-edit" data-approve="${i}" data-action="edit">Edit</button>
+        <button class="btn btn-decline" data-approve="${i}" data-action="decline">Decline</button>
+        <span class="small muted" style="margin-left:auto">${escapeHtml(a.via)}</span>
+      </div>
+    </div>`).join('');
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// UTILITY
+// ─────────────────────────────────────────────────────────────────────
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// VIEW SWITCHING
+// ─────────────────────────────────────────────────────────────────────
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.style.display = 'none');
+  const v = document.getElementById('view-' + name);
+  if (v) v.style.display = 'block';
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === name));
+  document.getElementById('page-title').textContent = name.charAt(0).toUpperCase() + name.slice(1);
+  const crumbs = { sales: 'Outbound · powered by UnitOne GTM', cockpit: 'Everything-on-one-screen', finance: 'AP · AR · cash · Brex' };
+  document.getElementById('page-crumb').textContent = crumbs[name] || (typeof MODULE_SNAPSHOTS !== 'undefined' && MODULE_SNAPSHOTS[name] ? MODULE_SNAPSHOTS[name].crumb : 'Module');
+  if (name === 'security') document.getElementById('page-title').textContent = 'IT & Security';
+}
+
+document.querySelectorAll('.nav-item').forEach(n => {
+  n.addEventListener('click', () => showView(n.dataset.view));
+});
+document.querySelectorAll('[data-view-link]').forEach(a => {
+  a.addEventListener('click', e => { e.preventDefault(); showView(a.dataset.viewLink); });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// MEMORY MODAL
+// ─────────────────────────────────────────────────────────────────────
+document.getElementById('edit-memory-btn').addEventListener('click', () => {
+  document.getElementById('mf-name').value    = memory.identity.name;
+  document.getElementById('mf-mission').value = memory.identity.mission;
+  document.getElementById('mf-pitch').value   = memory.identity.pitch;
+  document.getElementById('mf-icp').value     = memory.icp.primary;
+  document.getElementById('mf-voice').value   = memory.voice.tone;
+  document.getElementById('mf-pricing').value = memory.pricing.offer;
+  document.getElementById('mf-team').value    = memory.team.founders;
+  document.getElementById('memory-modal').classList.add('open');
+});
+document.getElementById('memory-close').addEventListener('click', () => document.getElementById('memory-modal').classList.remove('open'));
+document.getElementById('memory-cancel').addEventListener('click', () => document.getElementById('memory-modal').classList.remove('open'));
+document.getElementById('memory-save').addEventListener('click', () => {
+  memory.identity.name    = document.getElementById('mf-name').value.trim();
+  memory.identity.mission = document.getElementById('mf-mission').value.trim();
+  memory.identity.pitch   = document.getElementById('mf-pitch').value.trim();
+  memory.icp.primary      = document.getElementById('mf-icp').value.trim();
+  memory.voice.tone       = document.getElementById('mf-voice').value.trim();
+  memory.pricing.offer    = document.getElementById('mf-pricing').value.trim();
+  memory.team.founders    = document.getElementById('mf-team').value.trim();
+  saveMemory(memory);
+  document.getElementById('memory-modal').classList.remove('open');
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// ASK THE OS — uses askClaude with memory as retrieval context
+// ─────────────────────────────────────────────────────────────────────
+async function askTheOs(question) {
+  const out = document.getElementById('ask-output');
+  out.style.display = 'block';
+  out.textContent = '…';
+
+  if (!window.cowork || !window.cowork.askClaude) {
+    out.textContent = 'askClaude not available in this preview. (In the live artifact, this calls a Haiku inference over Startup Memory.)';
+    return;
+  }
+
+  try {
+    const prompt = `You are StartupOS, the founder's operating system. Answer the founder's question using the Startup Memory provided. Be specific, technical, and brief. No marketing fluff. Reference the actual memory facts when relevant.
+
+Founder's question: ${question}`;
+
+    const answer = await window.cowork.askClaude(prompt, [memory]);
+    out.textContent = answer;
+  } catch (e) {
+    out.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
+  }
+}
+
+document.getElementById('ask-btn').addEventListener('click', () => {
+  const q = document.getElementById('ask-input').value.trim();
+  if (q) askTheOs(q);
+});
+document.getElementById('ask-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const q = e.target.value.trim();
+    if (q) askTheOs(q);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// DAILY PULSE — generated from memory + sequence state
+// ─────────────────────────────────────────────────────────────────────
+async function generatePulse() {
+  const el = document.getElementById('pulse-content');
+  el.textContent = 'Drafting today\'s pulse from your memory and sequence state…';
+
+  if (!window.cowork || !window.cowork.askClaude) {
+    el.innerHTML = `
+      <strong>3 things on your plate this morning.</strong><br>
+      <strong>1.</strong> Sarah Chen (VP Eng, DataCo) replied to your VP Eng sequence 12 min ago — top of approve queue.<br>
+      <strong>2.</strong> Bob Lee (CTO, Widget Inc) clicked the demo link last night — LinkedIn DM drafted, waiting for you.<br>
+      <strong>3.</strong> CRA OT/BAS sequence delivered to 200 of 763 — first week pacing on plan (24 opens, 3 clicks, 1 reply).<br><br>
+      <em class="muted">(Live askClaude not available in this preview — shipping next iteration.)</em>`;
+    return;
+  }
+
+  try {
+    const prompt = `You are StartupOS. Draft a tight 4-line "Daily Pulse" for the founder. Use the Startup Memory + sequence state below. No filler. Lead with the most time-sensitive item first. Mention names and companies. Reference concrete numbers from the sequences. Maximum 90 words.
+
+Startup memory: ${JSON.stringify(memory)}
+Sequence state: ${JSON.stringify(SEQUENCES)}
+Active signals: ${JSON.stringify(SIGNALS)}`;
+
+    const text = await window.cowork.askClaude(prompt, [memory, SEQUENCES, SIGNALS]);
+    el.textContent = text;
+  } catch (e) {
+    el.textContent = 'Error generating pulse: ' + (e && e.message ? e.message : String(e));
+  }
+}
+
+document.getElementById('refresh-pulse').addEventListener('click', generatePulse);
+
+// ─────────────────────────────────────────────────────────────────────
+// WORKFLOW BUTTONS — open preview modal, "Run" sends prompt to chat
+// ─────────────────────────────────────────────────────────────────────
+let currentWorkflow = null;
+document.addEventListener('click', e => {
+  const wf = e.target.closest('.wf-btn');
+  if (wf) {
+    currentWorkflow = { name: wf.dataset.name, skill: wf.dataset.skill, desc: wf.dataset.desc };
+    document.getElementById('wf-title').textContent = currentWorkflow.name;
+    document.getElementById('wf-body').innerHTML = `
+      <div class="field">
+        <label class="field-label">Skill</label>
+        <div style="font-family:ui-monospace,monospace;font-size:12px">${escapeHtml(currentWorkflow.skill)}</div>
+      </div>
+      <div class="field">
+        <label class="field-label">What it does</label>
+        <div style="font-size:13px">${escapeHtml(currentWorkflow.desc)}</div>
+      </div>
+      <div class="field">
+        <label class="field-label">Memory it retrieves</label>
+        <div style="font-size:12px;color:#57534e">Identity · ICP · Brand voice · Pricing · ${currentWorkflow.skill.includes('hot-lead') || currentWorkflow.skill.includes('weekly') ? 'Recent engagement' : 'Pipeline state'}</div>
+      </div>
+      <div class="field">
+        <label class="field-label">Trust contract</label>
+        <div style="font-size:12px;color:#57534e">Workflow drafts output. <strong>Nothing sends without you</strong>. Drafts land in the Approve Queue.</div>
+      </div>`;
+    document.getElementById('wf-modal').classList.add('open');
+  }
+});
+document.getElementById('wf-close').addEventListener('click', () => document.getElementById('wf-modal').classList.remove('open'));
+document.getElementById('wf-cancel').addEventListener('click', () => document.getElementById('wf-modal').classList.remove('open'));
+document.getElementById('wf-run').addEventListener('click', () => {
+  if (currentWorkflow && window.sendPrompt) {
+    window.sendPrompt(`Run the ${currentWorkflow.skill} skill using my Startup Memory: ${JSON.stringify(memory)}`);
+    document.getElementById('wf-modal').classList.remove('open');
+    showToast(`${currentWorkflow.name} sent to chat`);
+  } else {
+    showToast('sendPrompt not available in this preview');
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// APPROVE QUEUE ACTIONS
+// ─────────────────────────────────────────────────────────────────────
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-approve]');
+  if (!btn) return;
+  const idx = parseInt(btn.dataset.approve, 10);
+  const action = btn.dataset.action;
+  const row = document.querySelector(`[data-approve-idx="${idx}"]`);
+  if (action === 'approve') {
+    row.style.opacity = '0.4';
+    row.style.pointerEvents = 'none';
+    showToast(`Sent · logged to memory · ${APPROVALS[idx].type.toLowerCase()}`);
+  } else if (action === 'decline') {
+    row.style.display = 'none';
+    showToast('Declined · logged to memory');
+  } else if (action === 'edit' && window.sendPrompt) {
+    window.sendPrompt(`Edit this draft before sending:\n\nType: ${APPROVALS[idx].type}\nTo: ${APPROVALS[idx].target}\n\n${APPROVALS[idx].preview}`);
+    showToast('Sent to chat for editing');
+  } else {
+    showToast('Edit mode coming next iteration');
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// SIGNAL ACTIONS
+// ─────────────────────────────────────────────────────────────────────
+document.addEventListener('click', e => {
+  const sig = e.target.closest('[data-signal-type]');
+  if (!sig) return;
+  const type = sig.dataset.signalType;
+  const name = sig.dataset.signalName;
+  if (window.sendPrompt) {
+    const skillMap = { reply: 'gtm-hot-lead-response', click: 'gtm-creative-angles', open: 'gtm-creative-angles' };
+    window.sendPrompt(`Run ${skillMap[type] || 'gtm-hot-lead-response'} for ${name} — use my Startup Memory and craft the response.`);
+    showToast(`Sent to chat — drafting response for ${name}`);
+  } else {
+    showToast('sendPrompt not available in this preview');
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// CONNECT BUTTONS
+// ─────────────────────────────────────────────────────────────────────
+document.getElementById('apollo-btn').addEventListener('click', () => {
+  if (window.sendPrompt) {
+    window.sendPrompt('Apollo OAuth has a known race condition in Cowork — three attempts failed because the MCP server times out the OAuth state. Instead, let\'s read sequence stats from the Azure VM daily report (~/unitone-gtm/reports/unitone_outbound_report.xlsx). Set up a small read path from the VM into the artifact.');
+  } else {
+    showToast('Apollo flows through Azure VM cron — MCP not required');
+  }
+});
+document.getElementById('posthog-btn').addEventListener('click', () => {
+  if (window.sendPrompt) {
+    window.sendPrompt('Open PostHog in chat — show me my dashboards, insights, recent person count, and top events for the last 7 days.');
+  } else {
+    showToast('PostHog connected via MCP');
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// POSTHOG — live wire
+// ─────────────────────────────────────────────────────────────────────
+async function loadPostHog() {
+  const statusEl = document.getElementById('ph-status');
+  const metaEl = document.getElementById('ph-meta');
+  const dashEl = document.getElementById('ph-dashboards');
+  const insightEl = document.getElementById('ph-insights');
+  const bannerEl = document.getElementById('ph-banner');
+  const orgLineEl = document.getElementById('ph-org-line');
+
+  if (!window.cowork || !window.cowork.callMcpTool) {
+    statusEl.innerHTML = '<span style="color:#2563eb">○ snapshot</span> · live inside Cowork';
+    metaEl.innerHTML = '<div class="kv-row"><span class="kv-key">Org</span><span class="kv-val">UnitOne</span></div><div class="kv-row"><span class="kv-key">Mode</span><span class="kv-val">Cookieless · injected on unitone.ai</span></div><div class="kv-row"><span class="kv-key">Attribution</span><span class="kv-val">Merged with Apollo every Friday 5pm ET (attribution_merge.py)</span></div>';
+    dashEl.innerHTML = '<em class="muted">Dashboards + insights load from PostHog MCP when opened in Cowork.</em>';
+    insightEl.innerHTML = '<em class="muted">Pageview trend (30d) loads live.</em>';
+    orgLineEl.textContent = 'PostHog org: UnitOne · snapshot mode';
+    return;
+  }
+
+  const PH = 'mcp__d3e32c9a-d4a9-44b9-be77-bcf1bd1d24fc__';
+
+  try {
+    statusEl.textContent = 'Loading project…';
+    const projects = await window.cowork.callMcpTool(PH + 'projects-get', {});
+    const project = projects && projects['0'] ? projects['0'] : (Array.isArray(projects) ? projects[0] : projects);
+    const projectName = project?.name || 'Default project';
+    const projectId = project?.id || '?';
+
+    statusEl.textContent = 'Loading dashboards & insights…';
+    const [dashboards, insights, trends] = await Promise.all([
+      window.cowork.callMcpTool(PH + 'dashboards-get-all', { limit: 10 }),
+      window.cowork.callMcpTool(PH + 'insights-list', { limit: 6 }),
+      window.cowork.callMcpTool(PH + 'query-trends', {
+        series: [{ kind: 'EventsNode', event: '$pageview', math: 'total' }],
+        dateRange: { date_from: '-30d' },
+        interval: 'day'
+      })
+    ]);
+
+    // Project meta
+    metaEl.innerHTML = `
+      <div class="kv-row"><span class="kv-key">Org</span><span class="kv-val">UnitOne</span></div>
+      <div class="kv-row"><span class="kv-key">Project</span><span class="kv-val">${escapeHtml(projectName)} <span class="muted small">(id ${projectId})</span></span></div>
+    `;
+    orgLineEl.textContent = 'PostHog org: UnitOne · project: ' + projectName;
+
+    // Dashboards
+    const dashList = dashboards?.results || [];
+    if (dashList.length === 0) {
+      dashEl.innerHTML = '<em class="muted">No dashboards in this project.</em>';
+    } else {
+      dashEl.innerHTML = dashList.map(d => `
+        <div style="padding:6px 0; border-bottom:1px solid #f5f5f4;">
+          <strong style="font-size:12px">${escapeHtml(d.name || 'Untitled')}</strong>
+          ${d.pinned ? '<span class="tag" style="margin-left:6px">pinned</span>' : ''}
+          <div class="small muted">${escapeHtml(d.description || 'No description')}</div>
+        </div>
+      `).join('');
+    }
+
+    // Insights
+    const insightList = insights?.results || [];
+    if (insightList.length === 0) {
+      insightEl.innerHTML = '<em class="muted">No insights in this project.</em>';
+    } else {
+      insightEl.innerHTML = insightList.map(i => `
+        <div style="padding:6px 0; border-bottom:1px solid #f5f5f4;">
+          <strong style="font-size:12px">${escapeHtml(i.name || i.derived_name || 'Untitled')}</strong>
+          <div class="small muted">${escapeHtml((i.description || '').slice(0, 110))}</div>
+        </div>
+      `).join('');
+    }
+
+    // Trends chart + gap detection
+    const trendData = trends?.results?.[0]?.data || [];
+    const trendLabels = trends?.results?.[0]?.labels || [];
+    const totalPageviews = trendData.reduce((a, b) => a + b, 0);
+
+    if (totalPageviews < 50) {
+      bannerEl.style.display = 'block';
+      bannerEl.innerHTML = `<strong>⚠ Low traffic detected.</strong> This PostHog project recorded only <strong>${totalPageviews} pageview(s)</strong> in the last 30 days. Memory says UnitOne has 25 landing pages + Vercel demos with cookieless PostHog instrumented. The production PostHog instance is likely a different project or account — switch projects in PostHog, or re-auth the MCP against your production account.`;
+    }
+
+    statusEl.textContent = totalPageviews + ' pageviews · 30d';
+    statusEl.style.color = totalPageviews < 50 ? '#b45309' : '#16a34a';
+
+    // Chart
+    const ctx = document.getElementById('ph-chart');
+    if (ctx._chart) ctx._chart.destroy();
+    if (typeof Chart === 'undefined') return;
+    ctx._chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: trendLabels.map(l => l.slice(0, 6)),
+        datasets: [{
+          label: '$pageview',
+          data: trendData,
+          borderColor: '#2563eb',
+          backgroundColor: '#2563eb22',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: { y: { beginAtZero: true, ticks: { font: { size: 9 } } }, x: { ticks: { font: { size: 8 }, autoSkip: true, maxTicksLimit: 8 } } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  } catch (e) {
+    statusEl.textContent = 'Error';
+    statusEl.style.color = '#b91c1c';
+    metaEl.innerHTML = `<div style="font-size:12px;color:#b91c1c;padding:10px;background:#fef2f2;border-radius:6px">PostHog call failed: ${escapeHtml(e?.message || String(e))}</div>`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CMD-K HINT — open chat
+// ─────────────────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    document.getElementById('ask-input').focus();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// FINANCE MODULE
+// ─────────────────────────────────────────────────────────────────────
+function fmtMoney(n) {
+  if (n === null || n === undefined) return '—';
+  return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtDate(s) {
+  if (!s) return '—';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function daysUntil(s) {
+  if (!s) return '';
+  const ms = new Date(s).getTime() - Date.now();
+  const d = Math.round(ms / 86400000);
+  if (d < 0) return `<span style="color:#b91c1c">${-d}d overdue</span>`;
+  if (d === 0) return '<strong>today</strong>';
+  if (d <= 7) return `<strong>in ${d}d</strong>`;
+  return `in ${d}d`;
+}
+function uid(prefix) {
+  return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// BAKED BREX SNAPSHOT — pulled at artifact build time so the file works
+// outside Cowork. When viewed inside Cowork's artifact panel,
+// loadBrexFinance() refreshes this with live MCP data on load.
+// ─────────────────────────────────────────────────────────────────────
+const BREX_SNAPSHOT = {
+  snapshotAt: '2026-09-03T18:55:11Z',
+  user: { id: 'cuuser_cmgfnd4iv02fp0g94hb2y4ayg', first_name: 'Kamalavasan', last_name: 'Srinivasan', email: 'kamal.srinivasan@unitone.ai', role: 'ACCOUNT_ADMIN', status: 'ACTIVE' },
+  accounts: [
+    { id: 'dpacc_cmggw6wf51ece01fm72t7g9hh', name: 'UnitOne, Inc.  checking account', nickname: 'Primary checking', account_number_last_four: '7355', account_type: 'CHECKING', status: 'ACTIVE', priority: 'PRIMARY',
+      balance_breakdown: { available_balance: '517.26 USD', processing_balance: '0.00 USD' },
+      cashflow: { current_month_cash_inflows: '0.00 USD', current_month_cash_outflows: '0.00 USD' } },
+    { id: 'dpacc_cmggw6wp41eaf01fumeqtgrne', name: 'UnitOne, Inc.  vault account', nickname: 'Vault', account_number_last_four: '4498', account_type: 'VAULT', status: 'ACTIVE', priority: 'NON_PRIMARY',
+      balance_breakdown: { available_balance: '0.00 USD', processing_balance: '0.00 USD' }, cashflow: { current_month_cash_inflows: '0.00 USD', current_month_cash_outflows: '0.00 USD' } },
+    { id: 'dpacc_cmggw6wvl1eed01fmxeu51weo', name: 'UnitOne, Inc.  treasury account', nickname: 'Treasury', account_number_last_four: '4896', account_type: 'TREASURY', status: 'ACTIVE', priority: 'NON_PRIMARY',
+      balance_breakdown: { available_balance: '0.00 USD', processing_balance: '0.00 USD' }, cashflow: { current_month_cash_inflows: '0.00 USD', current_month_cash_outflows: '0.00 USD' } }
+  ],
+  bills: [
+    { id: 'expense_cmqhguqwl6bcr0138d8uvalc4', status: 'APPROVED', payment_status: 'CLEARED', purchased_at: '2026-06-17T02:42:57Z', due_at: '2026-06-11T12:00:00Z', vendor_id: 'pdcont_cml1f3bq2041l017nns2t86gz', vendor_name: 'Surinder Singh', vendor_email: 'surinder.singh@unitone.ai', amount: '12500.00', currency: 'USD', external_invoice_number: '123460' },
+    { id: 'expense_cmpprd5gv2mf301871u8ofla9', status: 'APPROVED', payment_status: 'CLEARED', purchased_at: '2026-05-29T12:00:00Z', due_at: '2026-05-29T12:00:00Z', vendor_id: 'pdcont_cmk4jss0x00oc018asp2ttvoz', vendor_name: 'Devpulse LLC', vendor_email: 'vlad.tukhtarov@devpulse.com', amount: '6500.00', currency: 'USD', external_invoice_number: 'U1202604DP-1' },
+    { id: 'expense_cmp7gyt74oy3c0112nye9fxjj', status: 'APPROVED', payment_status: 'CLEARED', purchased_at: '2026-05-15T22:08:32Z', due_at: '2026-05-11T12:00:00Z', vendor_id: 'pdcont_cml1f3bq2041l017nns2t86gz', vendor_name: 'Surinder Singh', vendor_email: 'surinder.singh@unitone.ai', amount: '12500.00', currency: 'USD', external_invoice_number: '123459' },
+    { id: 'expense_cmod38bdjcjq301075p21pzkx', status: 'APPROVED', payment_status: 'CLEARED', purchased_at: '2026-04-24T15:51:13Z', due_at: '2026-04-11T12:00:00Z', vendor_id: 'pdcont_cml1f3bq2041l017nns2t86gz', vendor_name: 'Surinder Singh', vendor_email: 'surinder.singh@unitone.ai', amount: '20000.00', currency: 'USD', external_invoice_number: '123458' },
+    { id: 'expense_cmnnialzh1g000196milu94ob', status: 'APPROVED', payment_status: 'CLEARED', purchased_at: '2026-04-06T12:00:00Z', due_at: '2026-03-30T12:00:00Z', vendor_id: 'pdcont_cmnnfvyhj08nr018xkum8uq78', vendor_name: 'LLC DEVPULSE', amount: '12500.00', currency: 'USD', external_invoice_number: 'U1202602DP-1' },
+    { id: 'expense_cmmsjdmxlhqwj01788jrifnf1', status: 'APPROVED', payment_status: 'CLEARED', memo: 'Feb 2026 payment', purchased_at: '2026-03-16T07:00:00Z', due_at: '2026-03-11T12:00:00Z', vendor_id: 'pdcont_cml1f3bq2041l017nns2t86gz', vendor_name: 'Surinder Singh', vendor_email: 'surinder.singh@unitone.ai', amount: '20000.00', currency: 'USD', external_invoice_number: '123457' },
+    { id: 'expense_cmm2arv10014o0176m7ojiinb', status: 'APPROVED', payment_status: 'CLEARED', purchased_at: '2026-02-26T12:00:00Z', due_at: '2026-03-12T12:00:00Z', vendor_id: 'pdcont_cmk4jss0x00oc018asp2ttvoz', vendor_name: 'Devpulse LLC', vendor_email: 'vlad.tukhtarov@devpulse.com', amount: '9024.00', currency: 'USD', external_invoice_number: 'U1202601DP-1' },
+    { id: 'expense_cml72wiv231yk0147w9c7t0b9', status: 'APPROVED', payment_status: 'CLEARED', purchased_at: '2026-02-06T12:00:00Z', due_at: '2026-02-11T12:00:00Z', vendor_id: 'pdcont_cml1f3bq2041l017nns2t86gz', vendor_name: 'Surinder Singh', vendor_email: 'surinder.singh@unitone.ai', amount: '20000.00', currency: 'USD', external_invoice_number: '123456' },
+    { id: 'expense_cmkbf4acb1e9y0183rbi2ab6k', status: 'APPROVED', payment_status: 'CLEARED', purchased_at: '2026-01-13T12:00:00Z', due_at: '2026-01-13T12:00:00Z', vendor_id: 'pdcont_cmk4jss0x00oc018asp2ttvoz', vendor_name: 'Devpulse LLC', vendor_email: 'vlad.tukhtarov@devpulse.com', amount: '5318.00', currency: 'USD', external_invoice_number: 'U1202512DP-1' }
+  ],
+  vendors: [
+    { id: 'pdcont_cmk4jss0x00oc018asp2ttvoz', name: 'Devpulse LLC', status: 'ACTIVE', email: 'vlad.tukhtarov@devpulse.com', rail: 'INTL_SWIFT_WIRE', country: 'UA' },
+    { id: 'pdcont_cmnnfvyhj08nr018xkum8uq78', name: 'LLC DEVPULSE', status: 'ACTIVE', email: null, rail: 'INTL_SWIFT_WIRE', country: 'UA' },
+    { id: 'pdcont_cmmm8laz606o701ag6ed0u4q1', name: 'Manmeet Singh', status: 'ACTIVE', email: 'manmeetskalra@gmail.com', rail: 'INTL_SWIFT_WIRE', country: 'IN' },
+    { id: 'pdcont_cml1f3bq2041l017nns2t86gz', name: 'Surinder Singh', status: 'ACTIVE', email: 'surinder.singh@unitone.ai', rail: 'US_ACH', country: 'US' }
+  ],
+  cards: [
+    { id: 'ncard_cmmp9m3er7n5s0155axddxh7d', status: 'ACTIVE', holder_name: 'Prashant Ketkar', display_name: "Prashant Ketkar's Employee Card", last4: '6445', card_form: 'VIRTUAL',
+      limit: { name: "Prashant Ketkar's limit", spent: { quantity: '0', instrument_code_string: 'USD' }, available: { quantity: '100000' }, total: { quantity: '100000' } } }
+  ],
+  expenses: [],
+  transactions: [
+    { id: 'dptx_cmrn0xk9t006u01r2zt4ez2ii', type: 'WIRE', status: 'PROCESSED', amount: '2500.00 USD', timestamp: '2026-07-16T04:43:49', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmqgqxhlu07os01lp2wqq8ch5', type: 'WIRE', status: 'PROCESSED', amount: '9000.00 USD', timestamp: '2026-06-16T14:37:29', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmqfj336400oq01jg3lisr2nz', type: 'WIRE', status: 'PROCESSED', amount: '3000.00 USD', timestamp: '2026-06-15T18:10:08', display_name: 'CHRISTIAN AQUILINA' },
+    { id: 'dptx_cmq9pq3kg00e001qbgwrwb36y', type: 'WIRE', status: 'PROCESSED', amount: '3500.00 USD', timestamp: '2026-06-11T16:29:22', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmppnmrvf0h1u01mtdj0az6i9', type: 'WIRE', status: 'PROCESSED', amount: '5250.00 USD', timestamp: '2026-05-28T15:35:25', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmpp7o6qs04dw01mtimsvdol1', type: 'WIRE', status: 'PROCESSED', amount: '1750.00 USD', timestamp: '2026-05-28T08:08:38', display_name: 'CHRISTIAN AQUILINA' },
+    { id: 'dptx_cmp75r8nn0n5z01lihv7cf9wx', type: 'WIRE', status: 'PROCESSED', amount: '9375.00 USD', timestamp: '2026-05-15T16:55:09', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmp5v0av500qv01ktfjw4986p', type: 'WIRE', status: 'PROCESSED', amount: '3125.00 USD', timestamp: '2026-05-14T19:06:30', display_name: 'CHRISTIAN AQUILINA' },
+    { id: 'dptx_cmow298um03j401n03v6cp10r', type: 'WIRE', status: 'PROCESSED', amount: '3200.00 USD', timestamp: '2026-05-07T22:31:43', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmod1m73j0e1p01l1swm58caj', type: 'WIRE', status: 'PROCESSED', amount: '15000.00 USD', timestamp: '2026-04-24T15:06:09', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmobtuk500nrr01ixnb7s3azj', type: 'WIRE', status: 'PROCESSED', amount: '5000.00 USD', timestamp: '2026-04-23T18:40:57', display_name: 'CHRISTIAN AQUILINA' },
+    { id: 'dptx_cmnrqcbsg0oi001mks5x9jbcx', type: 'WIRE', status: 'PROCESSED', amount: '2500.00 USD', timestamp: '2026-04-09T17:07:23', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmmp1ocfj0grl01ko6tc7bh8o', type: 'WIRE', status: 'PROCESSED', amount: '24375.00 USD', timestamp: '2026-03-13T15:21:40', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmmnp3zpt01v001klul6mrjnb', type: 'WIRE', status: 'PROCESSED', amount: '8125.00 USD', timestamp: '2026-03-12T16:42:08', display_name: 'CHRISTIAN AQUILINA' },
+    { id: 'dptx_cmlv0wijb0dwy01h5mbql9md6', type: 'WIRE', status: 'PROCESSED', amount: '8643.00 USD', timestamp: '2026-02-20T15:06:56', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmlsiu6vz012i01j8i94wxv5c', type: 'WIRE', status: 'PROCESSED', amount: '2881.00 USD', timestamp: '2026-02-18T21:05:42', display_name: '1/CHRISTIAN AQUILINA' },
+    { id: 'dptx_cmkzr0jw70l8701j4rmsyb84r', type: 'WIRE', status: 'PROCESSED', amount: '4990.00 USD', timestamp: '2026-01-29T17:49:16', display_name: '1/CHRISTIAN AQUILINA' },
+    { id: 'dptx_cmkxtec5h03o901g2ov8jw0n3', type: 'WIRE', status: 'PROCESSED', amount: '10.00 USD', timestamp: '2026-01-28T09:20:26', display_name: '1/CHRISTIAN AQUILINA' },
+    { id: 'dptx_cmkx7c3o702fw01hlx1omzzqs', type: 'WIRE', status: 'PROCESSED', amount: '15000.00 USD', timestamp: '2026-01-27T23:02:50', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmjiq8dd80ims01lra0rcs0nv', type: 'WIRE', status: 'PROCESSED', amount: '2500.00 USD', timestamp: '2025-12-23T15:15:33', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmit91w8r018y01lxp5odjfxi', type: 'WIRE', status: 'PROCESSED', amount: '3000.00 USD', timestamp: '2025-12-05T19:20:25', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' },
+    { id: 'dptx_cmiout38f027601pjmujocw51', type: 'WIRE', status: 'PROCESSED', amount: '1000.00 USD', timestamp: '2025-12-02T20:17:45', display_name: 'PRASHANT VISHNU KETKAR, SONALI VIJA' }
+  ]
+};
+
+// Live Brex state — seeded from snapshot, refreshed by loadBrexFinance() if Cowork is available
+let liveBrex = {
+  loaded: true,           // start true — we have the snapshot
+  loading: false,
+  error: null,
+  source: 'snapshot',     // 'snapshot' or 'live'
+  refreshedAt: BREX_SNAPSHOT.snapshotAt,
+  user: BREX_SNAPSHOT.user,
+  accounts: BREX_SNAPSHOT.accounts,
+  bills: BREX_SNAPSHOT.bills,
+  vendors: BREX_SNAPSHOT.vendors,
+  cards: BREX_SNAPSHOT.cards,
+  expenses: BREX_SNAPSHOT.expenses,
+  transactions: BREX_SNAPSHOT.transactions,
+  cashflow: {
+    in: parseFloat(String(BREX_SNAPSHOT.accounts[0].cashflow.current_month_cash_inflows).replace(/[^0-9.\-]/g,'')) || 0,
+    out: Math.abs(parseFloat(String(BREX_SNAPSHOT.accounts[0].cashflow.current_month_cash_outflows).replace(/[^0-9.\-]/g,'')) || 0)
+  }
+};
+
+function parseMoneyStr(s) {
+  if (typeof s === 'number') return s;
+  if (s && typeof s === 'object') s = s.value !== undefined ? s.value : (s.amount !== undefined ? s.amount : s.display);
+  if (s === null || s === undefined) return 0;
+  const n = parseFloat(String(s).replace(/[^0-9.\-]/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+
+function financeSummary() {
+  const f = memory.finance;
+  const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0,0,0,0);
+
+  // Cash: live Brex accounts (sum of available balances) OR memory fallback
+  let cash = 0;
+  if (liveBrex.loaded && liveBrex.accounts.length > 0) {
+    cash = liveBrex.accounts.reduce((s,a) => s + parseMoneyStr(a.balance_breakdown?.available_balance), 0);
+  } else {
+    cash = f.cashOnHand || 0;
+  }
+
+  // Burn: from Brex primary account cashflow OR memory
+  const burn = liveBrex.loaded ? liveBrex.cashflow.out : (f.burnRate || 0);
+
+  // MTD received: prefer Brex inflows, fall back to memory.payments
+  let mtdReceived = 0;
+  if (liveBrex.loaded) {
+    mtdReceived = liveBrex.cashflow.in;
+  } else {
+    mtdReceived = f.payments.filter(p => new Date(p.date).getTime() >= monthStart.getTime())
+      .reduce((s,p) => s + Number(p.amount || 0), 0);
+  }
+
+  // AR (memory only — no Brex AR system)
+  const arOutstanding = f.invoices.filter(i => ['sent','overdue'].includes(i.status))
+    .reduce((s,i) => s + Number(i.amount || 0), 0);
+  const arOverdue = f.invoices.filter(i => i.status === 'overdue')
+    .reduce((s,i) => s + Number(i.amount || 0), 0);
+
+  // AP awaiting from Brex (DRAFT/SUBMITTED) + memory unpaid
+  const brexAwaiting = liveBrex.bills.filter(b => ['DRAFT','SUBMITTED','OUT_OF_POLICY'].includes(b.status))
+    .reduce((s,b) => s + parseMoneyStr(b.amount), 0);
+  const memAwaiting = f.bills.filter(b => b.status === 'unpaid').reduce((s,b) => s + Number(b.amount || 0), 0);
+  const apAwaiting = brexAwaiting + memAwaiting;
+
+  // Runway
+  const runway = burn > 0 ? cash / burn : null;
+  return { cash, burn, mtdReceived, arOutstanding, arOverdue, apAwaiting, runway };
+}
+
+async function loadBrexFinance() {
+  // Prefer the artifact runtime (claude.use('mcp')), then Cowork's bridge, else snapshot.
+  const brexCall = await getBrexCaller();
+  if (!brexCall) {
+    liveBrex.source = 'snapshot';
+    liveBrex.error = null;
+    renderFinance();
+    return;
+  }
+
+  liveBrex.loading = true;
+  renderFinance();
+
+  const BREX = 'mcp__4887702f-1c8b-43ae-a14c-8f6c7535297f__';
+  const sinceISO = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+
+  try {
+    const [user, accounts, bills, vendors, cards, expenses, transactions] = await Promise.all([
+      brexCall('get_user_myself', { intent: 'Identify the authenticated Brex user for the StartupOS Finance module.' }),
+      brexCall('list_business_accounts', { intent: 'Surface live cash position across UnitOne Brex accounts.', limit: 10 }),
+      brexCall('list_bills', { intent: 'Populate AP queue with real Brex bill state.', limit: 50 }),
+      brexCall('list_vendors', { intent: 'Enrich AP queue with vendor info.', limit: 50 }),
+      brexCall('list_cards', { intent: 'Show company cards in the Brex panel.', limit: 20 }),
+      brexCall('list_expenses', { intent: 'Show recent card expenses (last 30d) in the Brex panel.', limit: 50, types: ['CARD'], purchased_at_start: sinceISO }),
+      brexCall('list_banking_transactions', { intent: 'Populate incoming-funds rollup with real wires/ACH received.', limit: 50, min_amount: 1, sort: 'TIMESTAMP', direction: 'desc' })
+    ]);
+
+    liveBrex.user = user;
+    liveBrex.accounts = accounts?.items || [];
+    liveBrex.bills = bills?.items || [];
+    liveBrex.vendors = vendors?.items || [];
+    liveBrex.cards = cards?.items || [];
+    liveBrex.expenses = expenses?.items || [];
+    liveBrex.transactions = transactions?.items || [];
+
+    const primary = liveBrex.accounts.find(a => a.priority === 'PRIMARY') || liveBrex.accounts[0];
+    liveBrex.cashflow = {
+      in: parseMoneyStr(primary?.cashflow?.current_month_cash_inflows),
+      out: Math.abs(parseMoneyStr(primary?.cashflow?.current_month_cash_outflows))
+    };
+
+    liveBrex.loaded = true; liveBrex.loading = false; liveBrex.error = null;
+    liveBrex.source = 'live';
+    liveBrex.refreshedAt = new Date().toISOString();
+    renderFinance();
+  } catch (e) {
+    // Keep the snapshot — just note the refresh failed
+    liveBrex.loading = false;
+    liveBrex.error = 'Refresh failed (keeping snapshot): ' + (e && e.code ? mcpErrorCopy(e, 'Brex') : (e?.message || String(e)));
+    renderFinance();
+  }
+}
+
+function brexStatusToDisplay(status) {
+  const map = {
+    'DRAFT': 'draft', 'SUBMITTED': 'sent', 'OUT_OF_POLICY': 'overdue',
+    'APPROVED': 'paid', 'SETTLED': 'paid', 'CANCELED': 'draft', 'VOID': 'draft'
+  };
+  return map[status] || 'draft';
+}
+
+function brexStatusLabel(status) {
+  return status.replace(/_/g, ' ');
+}
+
+function renderFinance() {
+  const f = memory.finance;
+  const s = financeSummary();
+  const live = liveBrex.loaded;
+
+  // ─── CASH TILES ─────────────────────────────────────────────
+  const cashEl = document.getElementById('ct-cash');
+  cashEl.classList.remove('warn', 'bad');
+  cashEl.querySelector('.cash-tile-val').textContent = '$' + fmtMoney(s.cash);
+  if (live) {
+    cashEl.querySelector('.cash-tile-sub').innerHTML = liveBrex.accounts.length + ' Brex accts · ' + (liveBrex.source === 'live' ? 'live' : 'snapshot');
+    if (s.cash < 1000) cashEl.classList.add('bad');
+    else if (s.cash < 50000) cashEl.classList.add('warn');
+  } else {
+    cashEl.querySelector('.cash-tile-sub').textContent = liveBrex.loading ? 'loading from Brex…' : 'click Update or Refresh from Brex';
+  }
+
+  const burnEl = document.getElementById('ct-burn');
+  burnEl.querySelector('.cash-tile-val').textContent = '$' + fmtMoney(s.burn);
+  burnEl.querySelector('.cash-tile-sub').textContent = live ? 'current month outflows · Brex' : (s.burn === 0 ? '—' : 'monthly · manual');
+
+  const runwayEl = document.getElementById('ct-runway');
+  runwayEl.classList.remove('warn', 'bad');
+  if (s.runway === null) {
+    runwayEl.querySelector('.cash-tile-val').textContent = '—';
+    runwayEl.querySelector('.cash-tile-sub').textContent = 'Set burn to compute';
+  } else {
+    if (s.runway < 1) {
+      const days = Math.round(s.runway * 30);
+      runwayEl.querySelector('.cash-tile-val').textContent = days + ' day' + (days === 1 ? '' : 's');
+      runwayEl.classList.add('bad');
+    } else if (s.runway < 6) {
+      runwayEl.querySelector('.cash-tile-val').textContent = s.runway.toFixed(1) + ' mo';
+      runwayEl.classList.add('bad');
+    } else if (s.runway < 12) {
+      runwayEl.querySelector('.cash-tile-val').textContent = s.runway.toFixed(1) + ' mo';
+      runwayEl.classList.add('warn');
+    } else {
+      runwayEl.querySelector('.cash-tile-val').textContent = Math.floor(s.runway) + ' mo';
+    }
+    runwayEl.querySelector('.cash-tile-sub').textContent = live ? 'cash / current burn · live' : 'cash / burn · manual';
+  }
+
+  const mtdEl = document.getElementById('ct-mtd');
+  mtdEl.querySelector('.cash-tile-val').textContent = '$' + fmtMoney(s.mtdReceived);
+  mtdEl.querySelector('.cash-tile-sub').textContent = live ? 'current month inflows · Brex' : (f.payments.length + ' payments logged');
+
+  // ─── BILLS TABLE (live Brex + memory manual) ─────────────────
+  const billsTable = document.getElementById('bills-table');
+  const brexBills = liveBrex.bills.map(b => ({
+    id: b.id,
+    vendor: b.vendor_name || 'Unknown vendor',
+    vendorEmail: b.vendor_email,
+    amount: parseMoneyStr(b.amount),
+    dueDate: b.purchased_at,
+    rawStatus: b.status,
+    status: brexStatusToDisplay(b.status),
+    memo: b.memo,
+    source: 'brex',
+    brexUrl: `https://dashboard.brex.com/expenses/${b.id.replace(/^expense_/, '')}`
+  }));
+  const memBills = f.bills.map(b => ({
+    id: b.id,
+    vendor: b.vendor,
+    amount: b.amount,
+    dueDate: b.dueDate,
+    rawStatus: b.status.toUpperCase(),
+    status: b.status,
+    memo: b.notes,
+    source: 'manual',
+    payUrl: b.payUrl
+  }));
+  const allBills = [...brexBills, ...memBills].sort((a,b) => new Date(b.dueDate) - new Date(a.dueDate));
+
+  if (allBills.length === 0) {
+    billsTable.innerHTML = '<tr><td><div class="fin-empty">' +
+      (liveBrex.loading ? 'Loading bills from Brex…' :
+       liveBrex.error ? 'Brex error: ' + escapeHtml(liveBrex.error) :
+       live ? 'No bills in Brex and no manual bills tracked.' :
+       'Bills will load from Brex when connected. Click <strong>+ Add bill</strong> to add manual entries.') +
+      '</div></td></tr>';
+  } else {
+    billsTable.innerHTML =
+      '<thead><tr><th>Vendor</th><th class="amt">Amount</th><th>Date</th><th>Status</th><th></th></tr></thead>' +
+      '<tbody>' + allBills.slice(0, 30).map(b => `
+        <tr>
+          <td>
+            <strong>${escapeHtml(b.vendor)}</strong>
+            ${b.source === 'brex' ? '<span class="tag" style="margin-left:6px">brex</span>' : '<span class="tag" style="margin-left:6px">manual</span>'}
+            <div class="small muted">${escapeHtml(b.memo || b.vendorEmail || '')}</div>
+          </td>
+          <td class="amt">$${fmtMoney(b.amount)}</td>
+          <td>${fmtDate(b.dueDate)}</td>
+          <td><span class="status-pill status-${b.status}">${escapeHtml(brexStatusLabel(b.rawStatus))}</span></td>
+          <td class="action-col">
+            ${b.source === 'brex' ?
+              `<button class="row-action" onclick="window.open('${b.brexUrl}', '_blank')">View in Brex ↗</button>` :
+              (b.status === 'unpaid' ? `<button class="row-action primary" data-bill-pay="${b.id}">Approve · Pay in Brex ↗</button>` :
+               b.status === 'scheduled' ? `<button class="row-action" data-bill-paid="${b.id}">Mark paid</button>` :
+               `<button class="row-action" data-bill-del="${b.id}">Delete</button>`)}
+          </td>
+        </tr>
+      `).join('') + '</tbody>';
+  }
+  const apTotal = brexBills.filter(b => ['DRAFT','SUBMITTED','OUT_OF_POLICY'].includes(b.rawStatus)).reduce((s,b) => s + b.amount, 0);
+  const brexBillsPaid = brexBills.filter(b => ['APPROVED','SETTLED'].includes(b.rawStatus)).reduce((s,b) => s + b.amount, 0);
+  document.getElementById('ap-summary').textContent =
+    `$${fmtMoney(apTotal)} awaiting · $${fmtMoney(brexBillsPaid)} processed (last ${brexBills.length} bills)`;
+
+  // ─── INVOICES TABLE (memory only) ──────────────────────────
+  const invTable = document.getElementById('invoices-table');
+  for (const i of f.invoices) {
+    if (i.status === 'sent' && i.dueDate && new Date(i.dueDate) < new Date()) i.status = 'overdue';
+  }
+  const invoices = [...f.invoices].sort((a,b) => (b.amount || 0) - (a.amount || 0));
+  if (invoices.length === 0) {
+    invTable.innerHTML = '<tr><td><div class="fin-empty">No invoices issued yet. UnitOne is pre-revenue per Brex banking data — when first customer invoices go out, click <strong>+ Issue invoice</strong>.<br><br>Stripe MCP will auto-populate this when connected.</div></td></tr>';
+  } else {
+    invTable.innerHTML =
+      '<thead><tr><th>Customer</th><th class="amt">Amount</th><th>Due</th><th>Status</th><th></th></tr></thead>' +
+      '<tbody>' + invoices.map(i => `
+        <tr>
+          <td><strong>${escapeHtml(i.customer)}</strong><div class="small muted">${escapeHtml(i.customerEmail || '')}</div></td>
+          <td class="amt">$${fmtMoney(i.amount)}</td>
+          <td>${fmtDate(i.dueDate)}<div class="small muted">${daysUntil(i.dueDate)}</div></td>
+          <td><span class="status-pill status-${i.status}">${i.status.toUpperCase()}</span></td>
+          <td class="action-col">
+            ${i.status === 'draft' ? `<button class="row-action primary" data-inv-send="${i.id}">Mark sent</button>` :
+              i.status === 'overdue' ? `<button class="row-action primary" data-inv-followup="${i.id}">Draft follow-up</button>` :
+              i.status === 'sent' ? `<button class="row-action" data-inv-paid="${i.id}">Mark paid</button>` :
+              `<button class="row-action" data-inv-del="${i.id}">Delete</button>`}
+          </td>
+        </tr>
+      `).join('') + '</tbody>';
+  }
+  document.getElementById('ar-summary').textContent =
+    `$${fmtMoney(s.arOutstanding)} outstanding · $${fmtMoney(s.arOverdue)} overdue`;
+
+  // ─── INCOMING FUNDS (live Brex banking transactions + memory) ───
+  const payTable = document.getElementById('payments-table');
+  const rollup = {};
+  for (const t of liveBrex.transactions) {
+    const payer = t.display_name || 'Unknown';
+    const amt = parseMoneyStr(t.amount);
+    if (amt <= 0) continue;
+    if (!rollup[payer]) rollup[payer] = { payer, total: 0, count: 0, last: '', source: 'brex' };
+    rollup[payer].total += amt;
+    rollup[payer].count += 1;
+    if (!rollup[payer].last || t.timestamp > rollup[payer].last) rollup[payer].last = t.timestamp;
+  }
+  for (const p of f.payments) {
+    const payer = p.payer || 'Unknown';
+    if (!rollup[payer]) rollup[payer] = { payer, total: 0, count: 0, last: '', source: 'manual' };
+    rollup[payer].total += Number(p.amount || 0);
+    rollup[payer].count += 1;
+    if (!rollup[payer].last || p.date > rollup[payer].last) rollup[payer].last = p.date;
+  }
+  const rows = Object.values(rollup).sort((a,b) => b.total - a.total);
+  if (rows.length === 0) {
+    payTable.innerHTML = '<tr><td><div class="fin-empty">' +
+      (liveBrex.loading ? 'Loading banking transactions from Brex…' :
+       'No incoming funds tracked.') + '</div></td></tr>';
+  } else {
+    payTable.innerHTML =
+      '<thead><tr><th>Source</th><th class="amt">Total received</th><th>#</th><th>Last</th></tr></thead>' +
+      '<tbody>' + rows.slice(0, 20).map(r => `
+        <tr>
+          <td>
+            <strong>${escapeHtml(r.payer)}</strong>
+            <span class="tag" style="margin-left:6px">${r.source}</span>
+          </td>
+          <td class="amt">$${fmtMoney(r.total)}</td>
+          <td>${r.count}</td>
+          <td>${fmtDate(r.last)}</td>
+        </tr>
+      `).join('') + '</tbody>';
+  }
+  const totalReceived = rows.reduce((s,r) => s + r.total, 0);
+  document.getElementById('payments-summary').textContent =
+    `$${fmtMoney(totalReceived)} all-time · ${rows.length} sources · ${liveBrex.transactions.length} Brex wires`;
+
+  // ─── FINANCE TOP REFRESH STATUS ─────────────────────────────
+  const finRefresh = document.getElementById('fin-refresh-status');
+  if (finRefresh) {
+    if (liveBrex.loading) {
+      finRefresh.textContent = 'refreshing…';
+    } else if (liveBrex.refreshedAt) {
+      const t = new Date(liveBrex.refreshedAt);
+      const ageMin = Math.round((Date.now() - t.getTime()) / 60000);
+      const ageStr = ageMin < 1 ? 'just now' : ageMin < 60 ? ageMin + ' min ago' : Math.round(ageMin/60) + ' hr ago';
+      const sourceLabel = liveBrex.source === 'live' ? '● live' : '○ snapshot';
+      const sourceColor = liveBrex.source === 'live' ? '#16a34a' : '#2563eb';
+      finRefresh.innerHTML = `<span style="color:${sourceColor}">${sourceLabel}</span> · ${ageStr}`;
+    } else {
+      finRefresh.textContent = '';
+    }
+  }
+
+  // ─── BREX CARD PANEL (live cards + recent expenses) ─────────
+  const brexContent = document.getElementById('brex-content');
+  const brexStatus = document.getElementById('brex-status');
+
+  if (liveBrex.loading) {
+    brexStatus.textContent = 'Loading…';
+    brexStatus.style.color = '#78716c';
+    brexContent.innerHTML = '<div class="fin-empty">Pulling fresh data from Brex…</div>';
+  } else if (live) {
+    const sourceLabel = liveBrex.source === 'live' ? 'Live' : 'Snapshot';
+    const sourceColor = liveBrex.source === 'live' ? '#16a34a' : '#2563eb';
+    const tsStr = liveBrex.refreshedAt ? new Date(liveBrex.refreshedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+    brexStatus.innerHTML = `<span style="color:${sourceColor}">${sourceLabel}</span> · ${escapeHtml(liveBrex.user?.first_name || 'admin')}${tsStr ? ' · ' + escapeHtml(tsStr) : ''}`;
+    const cardSpend = liveBrex.expenses.reduce((s,e) => s + parseMoneyStr(e.amount), 0);
+    brexContent.innerHTML = `
+      ${liveBrex.error ? `<div style="padding: 8px 12px; background: #fef3c7; border: 1px solid #fde68a; border-radius: 6px; color: #92400e; font-size: 11px; margin-bottom: 12px;">${escapeHtml(liveBrex.error)}</div>` : ''}
+      ${liveBrex.source === 'snapshot' ? `<div style="padding: 8px 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; color: #1e40af; font-size: 11px; margin-bottom: 12px;"><strong>Snapshot data.</strong> This file is showing the Brex data as of the last artifact build. To get a live refresh, open the artifact inside Cowork's panel (not as a file in your browser).</div>` : ''}
+      <div class="cash-strip" style="margin-bottom: 0; grid-template-columns: 1fr 1fr;">
+        <div class="cash-tile"><div class="cash-tile-label">Active cards</div><div class="cash-tile-val">${liveBrex.cards.length}</div><div class="cash-tile-sub">${liveBrex.vendors.length} vendors on file</div></div>
+        <div class="cash-tile"><div class="cash-tile-label">Card spend · 30d</div><div class="cash-tile-val">$${fmtMoney(cardSpend)}</div><div class="cash-tile-sub">${liveBrex.expenses.length} transactions</div></div>
+      </div>
+      ${liveBrex.cards.length > 0 ? `
+        <div style="margin-top: 14px; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #44403c; margin-bottom: 6px;">Cards</div>
+        <div>${liveBrex.cards.map(c => `
+          <div style="padding: 8px 12px; border: 1px solid #f5f5f4; border-radius: 6px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <strong style="font-size: 12px;">${escapeHtml(c.holder_name || 'Unknown')}</strong>
+              <span class="tag" style="margin-left: 6px;">${escapeHtml(c.status)}</span>
+              <div class="small muted">····${escapeHtml(c.last4 || '????')} · ${escapeHtml(c.card_form || '')}</div>
+            </div>
+            <div style="text-align: right;">
+              <div class="amt">$${fmtMoney(parseMoneyStr(c.limit?.spent?.quantity))} / $${fmtMoney(parseMoneyStr(c.limit?.total?.quantity))}</div>
+              <div class="small muted">spent / limit</div>
+            </div>
+          </div>
+        `).join('')}</div>
+      ` : ''}
+      ${liveBrex.expenses.length === 0 ? `
+        <div style="margin-top: 14px; padding: 10px; background: #fafaf9; border-radius: 6px; font-size: 11px; color: #57534e; line-height: 1.6;">
+          <strong>No card expenses in last 30 days.</strong> Most UnitOne spend flows through Bill Pay (contractor wires to Devpulse, Surinder Singh, Manmeet Singh) — see AP queue above.
+        </div>
+      ` : ''}
+    `;
+  } else {
+    brexStatus.textContent = 'Not connected';
+    brexContent.innerHTML = `
+      <div class="stub-screen" style="padding: 30px 12px">
+        <div class="stub-icon">⚡</div>
+        <div class="stub-title" style="font-size:13px">Brex MCP not connected</div>
+        <div class="stub-sub" style="font-size:12px">Snapshot data is bundled with this file. To get a live refresh, open the artifact inside Cowork.</div>
+      </div>`;
+  }
+}
+
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function wireFinanceUI() {
+  // Modal close (universal)
+  document.querySelectorAll('[data-modal-close]').forEach(el =>
+    el.addEventListener('click', () => closeModal(el.dataset.modalClose))
+  );
+
+  // Open second edit-memory entry on Finance view
+  const editMem2 = document.getElementById('edit-memory-btn-2');
+  if (editMem2) editMem2.addEventListener('click', () => document.getElementById('edit-memory-btn').click());
+
+  // Cash modal
+  document.getElementById('edit-cash-btn').addEventListener('click', () => {
+    document.getElementById('cf-cash').value = memory.finance.cashOnHand || '';
+    document.getElementById('cf-burn').value = memory.finance.burnRate || '';
+    openModal('cash-modal');
+  });
+  document.getElementById('cash-save-btn').addEventListener('click', () => {
+    memory.finance.cashOnHand = parseFloat(document.getElementById('cf-cash').value) || 0;
+    memory.finance.burnRate = parseFloat(document.getElementById('cf-burn').value) || 0;
+    saveMemory(memory);
+    renderFinance();
+    closeModal('cash-modal');
+  });
+
+  // Bill modal
+  document.getElementById('add-bill-btn').addEventListener('click', () => {
+    ['bf-vendor','bf-amount','bf-due','bf-category','bf-payurl','bf-notes'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('bf-payurl').placeholder = 'https://dashboard.brex.com/billpay';
+    openModal('bill-modal');
+  });
+  document.getElementById('bill-save-btn').addEventListener('click', () => {
+    const vendor = document.getElementById('bf-vendor').value.trim();
+    const amount = parseFloat(document.getElementById('bf-amount').value);
+    if (!vendor || isNaN(amount)) { showToast('Vendor and amount required'); return; }
+    memory.finance.bills.push({
+      id: uid('b'),
+      vendor, amount,
+      dueDate: document.getElementById('bf-due').value,
+      status: 'unpaid',
+      category: document.getElementById('bf-category').value.trim() || 'other',
+      notes: document.getElementById('bf-notes').value.trim(),
+      source: 'manual',
+      payUrl: document.getElementById('bf-payurl').value.trim() || 'https://dashboard.brex.com/billpay'
+    });
+    saveMemory(memory);
+    renderFinance();
+    closeModal('bill-modal');
+  });
+
+  // Invoice modal
+  document.getElementById('add-invoice-btn').addEventListener('click', () => {
+    ['if-customer','if-email','if-amount','if-issue','if-due','if-notes'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('if-issue').value = new Date().toISOString().slice(0,10);
+    openModal('invoice-modal');
+  });
+  document.getElementById('invoice-save-btn').addEventListener('click', () => {
+    const customer = document.getElementById('if-customer').value.trim();
+    const amount = parseFloat(document.getElementById('if-amount').value);
+    if (!customer || isNaN(amount)) { showToast('Customer and amount required'); return; }
+    memory.finance.invoices.push({
+      id: uid('i'),
+      customer,
+      customerEmail: document.getElementById('if-email').value.trim(),
+      amount,
+      issueDate: document.getElementById('if-issue').value,
+      dueDate: document.getElementById('if-due').value,
+      status: 'draft',
+      notes: document.getElementById('if-notes').value.trim()
+    });
+    saveMemory(memory);
+    renderFinance();
+    closeModal('invoice-modal');
+  });
+
+  // Payment modal
+  document.getElementById('add-payment-btn').addEventListener('click', () => {
+    ['pf-payer','pf-amount','pf-date','pf-invoice','pf-notes'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('pf-method').value = 'wire';
+    document.getElementById('pf-date').value = new Date().toISOString().slice(0,10);
+    openModal('payment-modal');
+  });
+  document.getElementById('payment-save-btn').addEventListener('click', () => {
+    const payer = document.getElementById('pf-payer').value.trim();
+    const amount = parseFloat(document.getElementById('pf-amount').value);
+    if (!payer || isNaN(amount)) { showToast('Payer and amount required'); return; }
+    memory.finance.payments.push({
+      id: uid('p'),
+      payer, amount,
+      date: document.getElementById('pf-date').value,
+      method: document.getElementById('pf-method').value,
+      invoiceId: document.getElementById('pf-invoice').value.trim(),
+      notes: document.getElementById('pf-notes').value.trim()
+    });
+    saveMemory(memory);
+    renderFinance();
+    closeModal('payment-modal');
+  });
+
+  // Brex Bill Pay deep-link
+  document.getElementById('open-brex-billpay-btn').addEventListener('click', () => {
+    window.open('https://dashboard.brex.com/billpay', '_blank');
+  });
+
+  // Refresh from Brex (connected) or trigger connect (not connected)
+  function triggerBrexRefresh() {
+    if (sosMcp || (window.cowork && window.cowork.callMcpTool)) {
+      loadBrexFinance();
+      showToast('Refreshing from Brex…');
+    } else if (window.sendPrompt) {
+      window.sendPrompt('Trigger the scheduled task `refresh-brex-snapshot` now so the StartupOS Finance module gets a fresh Brex snapshot.');
+      showToast('Asking chat to refresh the snapshot…');
+    } else {
+      showToast('Live refresh requires Cowork — view the artifact in the panel, not as a file');
+    }
+  }
+  document.getElementById('connect-brex-btn').addEventListener('click', triggerBrexRefresh);
+  const topBtn = document.getElementById('refresh-brex-top');
+  if (topBtn) topBtn.addEventListener('click', triggerBrexRefresh);
+
+  // Row actions — delegated
+  document.addEventListener('click', e => {
+    const t = e.target.closest('[data-bill-pay], [data-bill-paid], [data-bill-del], [data-inv-send], [data-inv-paid], [data-inv-followup], [data-inv-del]');
+    if (!t) return;
+
+    if (t.dataset.billPay) {
+      const b = memory.finance.bills.find(x => x.id === t.dataset.billPay);
+      if (!b) return;
+      b.status = 'scheduled';
+      saveMemory(memory); renderFinance();
+      window.open(b.payUrl || 'https://dashboard.brex.com/billpay', '_blank');
+      showToast(`Scheduled · opened Brex Bill Pay for ${b.vendor}`);
+    } else if (t.dataset.billPaid) {
+      const b = memory.finance.bills.find(x => x.id === t.dataset.billPaid);
+      if (b) { b.status = 'paid'; saveMemory(memory); renderFinance(); showToast(`${b.vendor} marked paid`); }
+    } else if (t.dataset.billDel) {
+      memory.finance.bills = memory.finance.bills.filter(x => x.id !== t.dataset.billDel);
+      saveMemory(memory); renderFinance(); showToast('Bill deleted');
+    } else if (t.dataset.invSend) {
+      const i = memory.finance.invoices.find(x => x.id === t.dataset.invSend);
+      if (i) { i.status = 'sent'; if (!i.issueDate) i.issueDate = new Date().toISOString().slice(0,10); saveMemory(memory); renderFinance(); showToast(`Invoice to ${i.customer} marked sent`); }
+    } else if (t.dataset.invPaid) {
+      const i = memory.finance.invoices.find(x => x.id === t.dataset.invPaid);
+      if (i) { i.status = 'paid'; saveMemory(memory); renderFinance(); showToast(`${i.customer} marked paid · log payment to track totals`); }
+    } else if (t.dataset.invFollowup) {
+      const i = memory.finance.invoices.find(x => x.id === t.dataset.invFollowup);
+      if (i && window.sendPrompt) {
+        window.sendPrompt(`Draft a polite follow-up email for an overdue invoice. Use my Startup Memory brand voice (direct, technical, no consultant-speak). Customer: ${i.customer} (${i.customerEmail || 'no email'}). Amount: $${i.amount}. Due: ${i.dueDate}. Notes: ${i.notes || 'n/a'}.`);
+        showToast(`Drafting follow-up for ${i.customer} in chat`);
+      } else if (i) {
+        showToast(`Would draft follow-up to ${i.customer} · sendPrompt not available in preview`);
+      }
+    } else if (t.dataset.invDel) {
+      memory.finance.invoices = memory.finance.invoices.filter(x => x.id !== t.dataset.invDel);
+      saveMemory(memory); renderFinance(); showToast('Invoice deleted');
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// BOOT
+// ─────────────────────────────────────────────────────────────────────
+renderMemory();
+renderSequences();
+renderSignals();
+renderWorkflows();
+renderApprovals();
+renderDraftCampaigns();
+wireDraftCampaigns();
+renderFinance();
+wireFinanceUI();
+
+// ─────────────────────────────────────────────────────────────────────
+// MODULE SNAPSHOTS — Build / Marketing / Web / Customers / Social /
+// Security / Commerce / Research. Same pattern as BREX_SNAPSHOT: pulled
+// from the connected MCPs (Linear, Vercel, Brex) + Startup Memory at
+// build time, baked so the file works anywhere, refreshable in Cowork.
+// Every module has the same three-part shape: populated state on open,
+// a signal feed, and approve-before-execute actions. Nothing executes
+// without an explicit Approve click.
+// ─────────────────────────────────────────────────────────────────────
+const MODULE_SNAPSHOTS = {
+  build: {
+    title: 'Build', crumb: 'Engineering · Linear + Vercel', source: 'Linear (UnitoneSentinel) · Vercel (UNITONE)', snapshotAt: '2026-09-03T19:01:01Z',
+    memory: 'Team: Alexey (fixer/eval), Manmeet (JCI POC), Nanda (Cloud IQStudio) · Repos: UnitOneAI/* on Vercel · Cadence: no cycles, project-based',
+    tiles: [
+      { label: 'Open issues', val: '31', sub: 'of 40 most recent · UNI-113…161' },
+      { label: 'Urgent / High', val: '5', sub: '1 urgent · 4 high · 3 unassigned', cls: 'warn' },
+      { label: 'In progress', val: '3', sub: 'UNI-126, 148, 156 · all Alexey' },
+      { label: 'Prod deploys', val: '3 / 3', sub: 'website · threatmodel · shieldreply all READY' }
+    ],
+    signals: [
+      { kind: 'reply', title: 'UNI-161 · fixer picks files_changed[0] as primary; wrong main file', meta: 'High · Bug · opened today · Alexey · Backlog', action: 'Open in Linear', href: 'https://linear.app/unitonesentinel/issue/UNI-161' },
+      { kind: 'click', title: 'UNI-158 · workspace-graph build is 24 min per parent; corpus scale infeasible', meta: 'High · Improvement · today · unassigned', action: 'Assign', approve: 'assign-158' },
+      { kind: 'open', title: 'UNI-126 · Skill hierarchy (global/org/repo) — Urgent, in progress since Aug 20', meta: '14 days in progress · no update since · Alexey', action: 'Nudge', approve: 'nudge-126' },
+      { kind: 'bounce', title: 'threatmodel-frontend-design PR #1 merged → production (Aug 7)', meta: 'Cloud Inventory, Fix Queue, Document management · no release notes yet', action: 'Draft notes', approve: 'notes-tm' }
+    ],
+    table: {
+      title: 'Projects', accent: 'Linear · auto-synced',
+      cols: ['Project', 'Status', 'Open', 'Updated', ''],
+      rows: [
+        ['JCI Controls POC', pill('In flight', 'sent'), '2', 'Sep 1', link('https://linear.app/unitonesentinel/project/jci-controls-poc-b53129b81178')],
+        ['Cloud IQStudio', pill('Planned', 'scheduled'), '12', 'Aug 27', link('https://linear.app/unitonesentinel/project/cloud-iqstudio-a9f127408adc')],
+        ['UnitOne Controller OpenSrc', pill('In progress', 'paid'), '2', 'Aug 26', link('https://linear.app/unitonesentinel/project/unitone-controller-opensrc-15417db3da95')],
+        ['ThreatModel', pill('Backlog', 'draft'), '—', 'target Dec 31', link('https://linear.app/unitonesentinel/project/threatmodel-fe5f550c0114')],
+        ['LeadVentures', pill('Backlog', 'draft'), '—', 'Sep 1', link('https://linear.app/unitonesentinel/project/leadventures-d8f8901813d7')],
+        ['IQStudio', pill('Backlog', 'draft'), '—', 'Aug 18 · lead Nanda', link('https://linear.app/unitonesentinel/project/iqstudio-19ca5566c4ee')],
+        ['ShieldReply UI Overhaul', pill('Backlog', 'draft'), '—', 'Jul 2', link('https://linear.app/unitonesentinel/project/shieldreply-ui-overhaul-4b702f892c5d')]
+      ]
+    },
+    table2: {
+      title: 'Deployments', accent: 'Vercel · production',
+      cols: ['Project', 'State', 'Last deploy', 'Commit', ''],
+      rows: [
+        ['threatmodel-frontend-design', pill('READY', 'paid'), 'Aug 7', 'Merge PR #1 — Cloud Inventory, Fix Queue, Documents', link('https://vercel.com/unitone/threatmodel-frontend-design')],
+        ['shieldreply', pill('READY', 'paid'), 'Jun 30', 'via Claude Code agent · 1 failed build retried', link('https://vercel.com/unitone/shieldreply')],
+        ['v0-unitone-website', pill('READY', 'paid'), 'Apr 7', 'Strip PII metadata from PNG images', link('https://vercel.com/unitone/v0-unitone-website')]
+      ]
+    },
+    approvals: [
+      { id: 'assign-158', type: 'Linear · assign', target: 'UNI-158 → Alexey · due Sep 10', preview: 'Assign "workspace-graph build is 24 min per parent" to Alexey. Rationale from memory: Alexey owns the fixer + eval path (UNI-156, 157, 161 are his); this blocks corpus-scale eval. Set due date 2026-09-10 and priority High (unchanged).' },
+      { id: 'nudge-126', type: 'Slack · nudge', target: '#eng · @Alexey', preview: 'Hey Alexey — UNI-126 (skill hierarchy: global/org/repo with override + promotion) has been In Progress since Aug 20 with no update. Is it blocked on the JCI multi-repo RFC (UNI-155)? If so let\'s link them and re-scope. No rush on a reply today.' },
+      { id: 'notes-tm', type: 'Release notes · draft', target: 'threatmodel-frontend-design · PR #1', preview: 'ThreatModel frontend — Aug 7 release\n• Cloud Inventory page with filters and per-resource summary\n• Fix Queue: review, accept or defer agentic fixes\n• Documents: upload + status tracking for design docs\nBuilt with v0, merged to main by Christian. Next: wire Fix Queue to IQStudio auto-fix (UNI-139).' }
+    ],
+    next: ['GitHub MCP — PR/commit activity → engineer-week summaries', 'PagerDuty / Sentry — incident → Linear action items']
+  },
+
+  marketing: {
+    title: 'Marketing', crumb: 'Content + attribution · Vercel + PostHog', source: 'Vercel commits · PostHog (cookieless) · campaigns/', snapshotAt: '2026-09-03T19:01:01Z',
+    memory: 'Voice: technical, evidence-first, no doom/hype hooks · Audiences: CISO / CTO / VP Product Security · Proof asset: /spine demo',
+    tiles: [
+      { label: 'Live engagement pages', val: '4', sub: 'teardown · ROI · CRA demo · Guidewire teardown' },
+      { label: 'Campaigns in draft', val: '1', sub: 'JCI Alts — Threat Modeling wave 2.0 (18 accounts)', cls: 'warn' },
+      { label: 'Attribution', val: 'On', sub: 'PostHog cookieless · Friday merge with Apollo' },
+      { label: 'Web analytics', val: 'Off', sub: 'Vercel Web Analytics not enabled', cls: 'bad' }
+    ],
+    signals: [
+      { kind: 'reply', title: 'JCI Alts wave 2.0 has been in draft since Jun 3 — 18 accounts scored, 4 touches written', meta: 'Tier 1: Siemens 92 · Schneider 90 · Carrier/ALC 87 · Trane 85 · Honeywell on HOLD (conflict)', action: 'Review', approve: 'jci-tier1' },
+      { kind: 'click', title: 'CRA compliance demo page linked from 763 sequence emails — no per-page analytics', meta: 'Vercel Web Analytics returns 404 for v0-unitone-website', action: 'Enable', approve: 'enable-wa' },
+      { kind: 'open', title: 'Guidewire teardown page shipped Mar 31 with no follow-up touch', meta: 'Teardown → no sequence references it yet', action: 'Draft touch', approve: 'guidewire-touch' }
+    ],
+    table: {
+      title: 'Content assets', accent: 'unitone.ai · from Vercel commit history',
+      cols: ['Asset', 'Type', 'Shipped', 'Used by', ''],
+      rows: [
+        ['CRA compliance interactive demo', 'Demo page', 'Apr 3', 'CRA OT/BAS sequence (763 contacts)', link('https://vercel.com/unitone/v0-unitone-website')],
+        ['ROI calculator', 'Tool', 'Mar 30', 'Website nav', ''],
+        ['Security teardown', 'Long-form', 'Mar 30', 'VP Eng sequence', ''],
+        ['Guidewire Software teardown', 'Account-specific', 'Mar 31', '— unreferenced', ''],
+        ['"It Was a Lab Test. In Your Building It\'s Tuesday"', 'Blog (HF breach)', 'Aug', 'LinkedIn / Substack', ''],
+        ['JCI Alts landing-page spec', 'Spec · draft', 'Jun 4', 'campaigns/jci-alts-threat-modeling', '']
+      ]
+    },
+    approvals: [
+      { id: 'jci-tier1', type: 'Campaign · approve tier', target: 'JCI Alts wave 2.0 · Tier 1 (7 accounts, Honeywell excluded)', preview: 'Approve Tier 1 only: Siemens SI, Schneider Buildings, Carrier/Automated Logic, Trane, ABB Smart Buildings, Mitsubishi BA, Daikin Applied. Persona: VP Product Security. Creates Apollo sequence "JCI Alts — Threat Modeling v1" with the 4 touches from sequence.md, paused. Honeywell/Tridium stays on HOLD for warm intro.' },
+      { id: 'enable-wa', type: 'Vercel · enable analytics', target: 'v0-unitone-website', preview: 'Enable Vercel Web Analytics on v0-unitone-website so /demo, /roi and /teardown get per-route visitors, referrers and countries. Zero code change; PostHog stays the attribution source of truth. Cost: included in Pro.' },
+      { id: 'guidewire-touch', type: 'Outbound · draft touch', target: 'Guidewire · VP Engineering', preview: 'Subject: what we found in Guidewire\'s public surface\n\nWe published a security teardown of Guidewire\'s cloud stack in March — nothing sensitive, all from public artifacts. Two findings are still open as of this week. Happy to walk your team through it in 15 minutes, or just send the PDF. Which do you prefer?' }
+    ],
+    next: ['Ahrefs — SEO opportunity radar', 'Klaviyo — nurture sequences', 'Canva / Figma — brand-drift check on drafts']
+  },
+
+  web: {
+    title: 'Web', crumb: 'unitone.ai · Vercel', source: 'Vercel (UNITONE team, 9 projects)', snapshotAt: '2026-09-03T19:01:01Z',
+    memory: 'Site: v0-unitone-website (Next.js, GitHub UnitOneAI) · Deploy on push to main · Engagement pages served static via CDN · PostHog injected in HTML',
+    tiles: [
+      { label: 'Production', val: 'READY', sub: 'v0-unitone-website · deployed Apr 7' },
+      { label: 'Deploys (90d)', val: '20', sub: '19 READY · 1 ERROR (Apr 3, auto-recovered)' },
+      { label: 'Projects', val: '9', sub: '3 live · 6 v0 prototypes' },
+      { label: 'Runtime errors', val: '—', sub: 'query timed out · re-check in Cowork', cls: 'warn' }
+    ],
+    signals: [
+      { kind: 'open', title: 'Production site unchanged for 5 months (last commit Apr 7: strip PII from PNGs)', meta: 'Engagement pages still reference Q2 sequences', action: 'Plan refresh', approve: 'site-refresh' },
+      { kind: 'click', title: 'Web Analytics not enabled — no visitor data for any route', meta: 'get_web_analytics → 404 not_found', action: 'Enable', approve: 'enable-wa-web' },
+      { kind: 'bounce', title: 'Deploy GY9khLq failed Apr 3 (CRA demo commit) then succeeded 14 min later', meta: 'Same commit re-pushed by Kamal · no runbook entry', action: 'Log', approve: 'log-deploy' }
+    ],
+    table: {
+      title: 'Vercel projects', accent: 'UNITONE · Pro plan',
+      cols: ['Project', 'Repo', 'Status', 'Last activity', ''],
+      rows: [
+        ['v0-unitone-website', 'UnitOneAI/v0-unitone-website', pill('Live', 'paid'), 'Apr 7', link('https://vercel.com/unitone/v0-unitone-website')],
+        ['threatmodel-frontend-design', 'UnitOneAI/threatmodel-frontend-design', pill('Live', 'paid'), 'Aug 7', link('https://vercel.com/unitone/threatmodel-frontend-design')],
+        ['shieldreply', 'kamalsrini/shieldreply', pill('Live', 'paid'), 'Jun 30', link('https://vercel.com/unitone/shieldreply')],
+        ['outboundengine', 'kamalsrini/outboundengine', pill('Idle', 'draft'), 'Jun 18', link('https://vercel.com/unitone/outboundengine')],
+        ['v0-agent-security-control-plane', 'kamalsrini/agent-security-control-plane', pill('Prototype', 'draft'), 'Nov 2025', ''],
+        ['v0-unitone-mvp-1-0 · flowgraph · ai-agent-interface · moltid', 'v0 (no repo)', pill('Prototype', 'draft'), '2025', '']
+      ]
+    },
+    approvals: [
+      { id: 'site-refresh', type: 'Website · plan', target: 'unitone.ai homepage + /demo', preview: 'Draft a homepage refresh brief: lead with the /spine demo (design-tier threat modeling → agentic fix), replace the Q2 CRA hero with the JCI/BAS product-security angle, keep ROI + teardown pages. Output: Linear project "Site refresh Q4" with 5 issues, unassigned, for review.' },
+      { id: 'enable-wa-web', type: 'Vercel · enable analytics', target: 'v0-unitone-website', preview: 'Enable Web Analytics on the production project. No code change. StartupOS reads visitors/route/referrer weekly into Marketing.' },
+      { id: 'log-deploy', type: 'Memory · log', target: 'Startup Memory → build.incidents', preview: 'Record: 2026-04-03 production deploy failed on CRA-demo commit (89aaf7e), re-push 150286e succeeded 14 min later. Cause not recorded. Add to runbook as "re-push on transient Vercel build error".' }
+    ],
+    next: ['Cloudflare / DNS — domain + cert visibility', 'Lighthouse — weekly perf + a11y score']
+  },
+
+  customers: {
+    title: 'Customers', crumb: 'Accounts · Linear + Sales memory', source: 'Linear (JCI POC) · Sales memory · Apollo (pending — connector down at snapshot)', snapshotAt: '2026-09-03T19:01:01Z',
+    memory: 'ICP: BAS/BMS vendors + product-security orgs · Design partner: JCI · Never cold-email Honeywell/Tridium (conflict) · Advisory: Core42',
+    tiles: [
+      { label: 'Active POC', val: '1', sub: 'Johnson Controls · Metasys · Josh' },
+      { label: 'Engaged accounts', val: '3', sub: 'JCI · Guidewire · Core42 (advisory)' },
+      { label: 'Outbound reach', val: '841', sub: 'contacts · 3 sequences · last known Apr 3' },
+      { label: 'Open asks', val: '2', sub: 'JCI: multi-repo · JSON issue reports', cls: 'warn' }
+    ],
+    signals: [
+      { kind: 'reply', title: 'JCI asked for JSON issue reports for the fixes Josh sends (UNI-160, Sep 1)', meta: 'Assigned Manmeet · Backlog · no due date', action: 'Prioritize', approve: 'jci-160' },
+      { kind: 'click', title: 'JCI needs multi-repo support (UNI-159) — depends on design RFC UNI-155', meta: 'Both in Backlog · unassigned', action: 'Link + assign', approve: 'jci-159' },
+      { kind: 'open', title: 'Fable 5.1 security scan ran on jci-metasys/basic-services-dotnet — results not yet sent to JCI', meta: 'Sept 2026 · SecuritySkills', action: 'Draft summary', approve: 'jci-scan' }
+    ],
+    table: {
+      title: 'Accounts', accent: 'Account 360 · v0',
+      cols: ['Account', 'Stage', 'Champion', 'Last touch', 'Next step'],
+      rows: [
+        ['Johnson Controls (JCI)', pill('POC', 'paid'), 'Josh', 'Sep 1 · Linear', 'Send Metasys scan summary + JSON reports'],
+        ['Guidewire Software', pill('Engaged', 'sent'), '—', 'Mar 31 · teardown page', 'Draft VP Eng touch (Marketing)'],
+        ['Core42 (G42)', pill('Advisory', 'scheduled'), '—', 'Aug · strategy docs', 'Sovereign AI / CPTO 90-day plan'],
+        ['Siemens Smart Infrastructure', pill('Target', 'draft'), '—', 'ICP 92', 'JCI Alts Tier 1 (awaiting approval)'],
+        ['Schneider Electric Buildings', pill('Target', 'draft'), '—', 'ICP 90', 'JCI Alts Tier 1'],
+        ['Honeywell / Tridium', pill('HOLD', 'unpaid'), '—', 'ICP 95', 'Warm intro only — conflict of interest']
+      ]
+    },
+    approvals: [
+      { id: 'jci-160', type: 'Linear · prioritize', target: 'UNI-160 → High · due Sep 8', preview: 'Set UNI-160 "JSON issue report creation for the fixes that Josh sends" to High priority with due date 2026-09-08. It is a direct customer ask from the only active POC. Keep Manmeet as assignee.' },
+      { id: 'jci-159', type: 'Linear · link + assign', target: 'UNI-159 ← blocked by UNI-155', preview: 'Mark UNI-159 (Multi-repo support in JCI) as blocked by UNI-155 (Multi-repo fix support design RFC). Assign UNI-155 to Alexey for the RFC. Add both to project "JCI Controls POC".' },
+      { id: 'jci-scan', type: 'Email · draft', target: 'Josh @ JCI', preview: 'Josh — we ran our scanner over the public Metasys basic-services-dotnet repo this week. Attached is the summary: findings by severity, the three we\'d fix first, and the proposed PRs. Nothing here is in your private code; this is the public SDK only. Want us to run the same pass on the internal repos under the POC NDA?' }
+    ],
+    next: ['Apollo accounts + deals (connector was down at snapshot)', 'HubSpot / Gmail — last-touch and reply history', 'NPS + support themes']
+  },
+
+  social: {
+    title: 'Social', crumb: 'LinkedIn · follow-up queue + posts', source: 'UnitOne GTM (Azure VM · linkedin_followup_queue.py) · EditorialOS drafts', snapshotAt: '2026-09-03T19:01:01Z',
+    memory: 'Channel: LinkedIn primary, X + Substack secondary · Rule: nothing publishes without approval · Queue rebuilt 9am ET daily from engagement signals',
+    tiles: [
+      { label: 'DM queue', val: '79', sub: '18 sent · 61 pending · last known Apr 3', cls: 'warn' },
+      { label: 'Posts drafted', val: '2', sub: 'HF breach brief · "It Was a Lab Test…"' },
+      { label: 'Trigger rules', val: '3', sub: '🟠 click → DM 24h · 🟡 3+ opens → connect · 🔴 reply → call' },
+      { label: 'Queue refresh', val: 'Daily', sub: '9:00am ET · cron on Azure VM' }
+    ],
+    signals: [
+      { kind: 'click', title: '61 LinkedIn DMs generated from engagement signals, not yet sent', meta: 'Queue CSV on Azure VM · manual send · last snapshot Apr 3 (pull pending)', action: 'Send next 5', approve: 'dm-5' },
+      { kind: 'open', title: '"It Was a Lab Test. In Your Building It\'s Tuesday" — enterprise piece on the HF breach, ready', meta: 'Long-running agents need continuously correlated security, not point tools', action: 'Publish', approve: 'post-labtest' },
+      { kind: 'bounce', title: 'Technical security brief on the July HF breach — companion post', meta: 'Draft · pairs with the enterprise piece', action: 'Schedule', approve: 'post-brief' }
+    ],
+    table: {
+      title: 'Follow-up queue · top of list', accent: 'from engagement_watcher signals',
+      cols: ['Contact', 'Trigger', 'Sequence', 'Draft', ''],
+      rows: [
+        ['VP Eng · CRA OT/BAS account', pill('🟠 click', 'scheduled'), 'CRA OT/BAS', 'Saw you opened the CRA readiness scan — happy to run it on your Niagara build…', ''],
+        ['CTO · BMS vendor', pill('🟡 3+ opens', 'sent'), 'CTO v2', 'Connection request + 1-line note', ''],
+        ['Head of Product Security', pill('🟠 click', 'scheduled'), 'CRA OT/BAS', 'Demo link clicked twice — offer 15-min PSIRT briefing', ''],
+        ['Names + drafts load from linkedin_followup_queue.csv when the Azure pull lands', '', '', '', '']
+      ]
+    },
+    approvals: [
+      { id: 'dm-5', type: 'LinkedIn · send batch', target: 'Next 5 DMs in queue', preview: 'Open the next 5 queued DMs in LinkedIn, one tab each, pre-filled. You click Send on each — StartupOS never sends on your behalf. Marks them sent in watcher_state.json after you confirm.' },
+      { id: 'post-labtest', type: 'LinkedIn · publish', target: 'Company page + personal', preview: 'It Was a Lab Test. In Your Building It\'s Tuesday.\n\nIn July an AI model took down Hugging Face during a benchmark run. The interesting part isn\'t the outage — it\'s that every control they had was a point tool, and the agent was long-running. [full post from EditorialOS draft]' },
+      { id: 'post-brief', type: 'Substack · schedule', target: 'Tuesday 7am PT', preview: 'Schedule the technical companion brief for next Tuesday. Cross-post link to LinkedIn 2 hours later. No changes to copy.' }
+    ],
+    next: ['LinkedIn API — send + reply tracking', 'X / Typefully — cross-post scheduler', 'Mentions feed']
+  },
+
+  security: {
+    title: 'IT & Security', crumb: 'Posture · SecuritySkills + Brex + Linear', source: 'SecuritySkills scans · Brex (roles, cards) · Linear (security issues)', snapshotAt: '2026-09-03T19:01:01Z',
+    memory: 'Product is a security product — posture must be demonstrable · SOC2 prep in Phase 3 · Money never moves through StartupOS (trust contract)',
+    tiles: [
+      { label: 'Scans this month', val: '1', sub: 'jci-metasys/basic-services-dotnet · Fable 5.1' },
+      { label: 'Open investigations', val: '2', sub: 'Agent Identity Threat (UNI-150/151 · duplicate)', cls: 'warn' },
+      { label: 'Admin accounts', val: '2', sub: 'Brex ACCOUNT_ADMIN: Kamal, Prashant · 1 card active' },
+      { label: 'SOC2', val: 'Not started', sub: 'Phase 3 · evidence pipeline planned', cls: 'warn' }
+    ],
+    signals: [
+      { kind: 'reply', title: 'UNI-150 and UNI-151 are duplicate "Investigate Agent Identity Threat" issues', meta: 'Both Backlog · created 7 min apart on Aug 25 · unassigned', action: 'Merge', approve: 'merge-150' },
+      { kind: 'click', title: 'JCI Metasys SDK scan complete — findings not yet triaged into Linear', meta: 'SecuritySkills · public repo only', action: 'Triage', approve: 'triage-jci' },
+      { kind: 'open', title: 'Docker image doesn\'t auto-sync SecuritySkills on startup; pyyaml missing (UNI-153)', meta: 'Alexey · Backlog · affects every fresh deploy', action: 'Prioritize', approve: 'prio-153' },
+      { kind: 'bounce', title: 'Vendor payment rails: 3 international SWIFT, 1 US ACH — all ACTIVE, W-9 valid where required', meta: 'Brex vendor records · no anomalies', action: '', approve: '' }
+    ],
+    table: {
+      title: 'Controls', accent: 'v0 posture · self-reported',
+      cols: ['Control', 'Status', 'Evidence', 'Owner', ''],
+      rows: [
+        ['Secrets management', pill('OK', 'paid'), '.env chmod 600 on Azure VM · no keys in repo', 'Kamal', ''],
+        ['Card + spend limits', pill('OK', 'paid'), 'Brex: 1 card, $100k/mo user limit, $0 spent', 'Kamal', ''],
+        ['Bill pay approval', pill('OK', 'paid'), 'All 9 bills APPROVED in Brex UI · none via StartupOS', 'Kamal', ''],
+        ['MFA on admin accounts', pill('Verify', 'scheduled'), 'Not recorded in memory', '—', ''],
+        ['Repo visibility', pill('OK', 'paid'), 'UnitOneAI repos private on GitHub (Vercel meta)', 'Christian', ''],
+        ['SOC2 evidence', pill('Not started', 'draft'), 'Phase 3', '—', '']
+      ]
+    },
+    approvals: [
+      { id: 'merge-150', type: 'Linear · merge duplicates', target: 'UNI-151 → UNI-150', preview: 'Mark UNI-151 as duplicate of UNI-150 ("Investigate Agent Identity Threat"), cancel UNI-151, keep UNI-150, add label Security. Assign to Kamal for scoping.' },
+      { id: 'triage-jci', type: 'Linear · create issues', target: 'Project: JCI Controls POC', preview: 'Create one Linear issue per High/Critical finding from the Metasys basic-services-dotnet scan, tagged Security + JCI, linked to the scan report. Draft only — you review the list before anything is created.' },
+      { id: 'prio-153', type: 'Linear · prioritize', target: 'UNI-153 → High', preview: 'Raise UNI-153 (Docker auto-sync SecuritySkills + pyyaml) to High. Every fresh deploy ships without current skills until this lands.' }
+    ],
+    next: ['GitHub — Dependabot + secret-scanning alerts', 'Okta / Google Workspace — MFA + offboarding evidence', 'Vanta / Drata — SOC2 pipeline']
+  },
+
+  commerce: {
+    title: 'Commerce', crumb: 'Subscriptions + billing', source: 'Not connected', snapshotAt: '2026-09-03T19:01:01Z',
+    memory: 'Pricing thesis: $99 Founder / $299 Team / $999 Growth · flat, no credits, no rev-share · Stripe billing planned Phase 1',
+    tiles: [
+      { label: 'MRR', val: '$0', sub: 'pre-revenue · POC-stage' },
+      { label: 'Subscriptions', val: '0', sub: 'Stripe not connected' },
+      { label: 'Incoming funds (Brex)', val: '$2.5k', sub: 'Jul 16 · last wire · see Finance' },
+      { label: 'Providers', val: '0 / 3', sub: 'Stripe · Shopify · Chargebee' }
+    ],
+    signals: [
+      { kind: 'open', title: 'No billing provider connected — Commerce reads $0 by construction', meta: 'Stripe MCP is the Phase 1 dependency for Founder tier', action: 'Connect', approve: 'connect-stripe' }
+    ],
+    approvals: [
+      { id: 'connect-stripe', type: 'Integration · connect', target: 'Stripe MCP (read-only)', preview: 'Connect Stripe in read-only mode. Commerce will populate subscriptions, MRR, failed payments and disputes; Finance AR gets auto-populated invoices. No write scopes requested.' }
+    ],
+    next: ['Stripe MCP', 'Shopify MCP', 'Chargebee MCP']
+  },
+
+  research: {
+    title: 'Research', crumb: 'Customer + market research', source: 'Not connected', snapshotAt: '2026-09-03T19:01:01Z',
+    memory: 'Research corpus: JCI Alts brief (18 accounts scored), competitive landscape (Polsia / Lev / Gumloop), HF breach analysis',
+    tiles: [
+      { label: 'Interviews', val: '0', sub: 'no transcripts ingested yet' },
+      { label: 'Account briefs', val: '18', sub: 'JCI Alts targets.md · ICP scored' },
+      { label: 'Competitor teardowns', val: '3', sub: 'Polsia · Lev · Gumloop (StartupOS brief)' },
+      { label: 'Open questions', val: '2', sub: 'Stripe next? · Mercury for cash?' }
+    ],
+    signals: [
+      { kind: 'open', title: 'Design-partner interview program not started — 0 transcripts in memory', meta: 'Phase 3 module · Gong / Fireflies / manual upload', action: 'Plan', approve: 'plan-interviews' }
+    ],
+    approvals: [
+      { id: 'plan-interviews', type: 'Research · plan', target: '5 design-partner interviews', preview: 'Draft a 5-interview plan for JCI + Tier 1 BAS product-security leads: discussion guide (30 min), recruiting note, and a synthesis template that writes back to Startup Memory (icp, pains, objections). Output as Linear project for review.' }
+    ],
+    next: ['Fireflies / Gong — transcript ingest', 'Dovetail-style theme synthesis']
+  }
+};
+
+function pill(text, cls) { return `<span class="status-pill status-${cls}">${text}</span>`; }
+function link(href, label) { return `<a href="${href}" target="_blank" rel="noopener">${label || '↗'}</a>`; }
+
+const approvedActions = JSON.parse(localStorage.getItem('sos.approved') || '{}');
+
+function renderModule(name) {
+  const m = MODULE_SNAPSHOTS[name];
+  const view = document.getElementById('view-' + name);
+  if (!m || !view) return;
+  const age = (() => { const t = new Date(m.snapshotAt); const min = Math.round((Date.now() - t.getTime()) / 60000); return min < 1 ? 'just now' : min < 60 ? min + ' min ago' : min < 1440 ? Math.round(min / 60) + ' hr ago' : Math.round(min / 1440) + ' d ago'; })();
+  const tiles = m.tiles.map(t => `<div class="cash-tile ${t.cls || ''}"><div class="cash-tile-label">${t.label}</div><div class="cash-tile-val">${t.val}</div><div class="cash-tile-sub">${t.sub}</div></div>`).join('');
+  const signals = (m.signals || []).map(s => `
+    <div class="signal-row">
+      <div class="signal-icon ${s.kind}">${{ reply: '!', click: '→', open: '◔', bounce: '·' }[s.kind]}</div>
+      <div class="signal-body"><div class="signal-title">${s.title}</div><div class="signal-meta">${s.meta}</div></div>
+      ${s.action ? (s.href ? `<a class="signal-action" href="${s.href}" target="_blank" rel="noopener">${s.action}</a>` : `<button class="signal-action" data-focus-approval="${s.approve}">${s.action}</button>`) : ''}
+    </div>`).join('');
+  const table = (t) => !t ? '' : `
+    <div class="card"><div class="card-header"><div class="card-title">${t.title} <span class="accent">/ ${t.accent}</span></div></div>
+      <div style="overflow-x:auto"><table class="fin-table"><thead><tr>${t.cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+      <tbody>${t.rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div>`;
+  const approvals = (m.approvals || []).map(a => {
+    const done = approvedActions[a.id];
+    return `
+    <div class="approve-row" id="approval-${a.id}" style="${done ? 'opacity:.6' : ''}">
+      <div class="approve-head"><span class="approve-type">${a.type}</span><span class="approve-target">${a.target}</span></div>
+      <div class="approve-preview">${escapeHtml(a.preview)}</div>
+      <div class="approve-actions">
+        ${done ? `<span class="small" style="color:#166534;font-weight:600">✓ Approved ${typeof done === 'string' ? done : done.at}${typeof done === 'object' && done.result ? ' · ' + escapeHtml(done.result) + (done.url ? ` <a href="${done.url}" target="_blank" rel="noopener">view ↗</a>` : '') : ' · queued for execution'}</span>` :
+        `<button class="btn btn-approve" data-approve="${a.id}">Approve</button>
+         <button class="btn btn-edit" data-edit="${a.id}">Edit</button>
+         <button class="btn btn-decline" data-decline="${a.id}">Decline</button>`}
+      </div>
+    </div>`;
+  }).join('');
+  view.innerHTML = `
+    <div class="card memory-card">
+      <div class="card-header">
+        <div class="card-title">Startup Memory <span class="accent">/ retrieved into ${m.title}</span></div>
+        <span class="tag">v0</span>
+        <span class="small muted" style="margin-left:8px">${m.liveAt ? '<span style="color:#16a34a">● live</span> · ' + new Date(m.liveAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '<span style="color:#2563eb">○ snapshot</span> · ' + age} · ${m.source}</span>
+        ${(m.liveErrors || []).map(e => `<span class="small" style="margin-left:8px;color:#b45309">⚠ ${escapeHtml(e)}</span>`).join('')}
+        <div style="margin-left:auto"></div>
+        <button class="btn btn-ghost" data-refresh-module="${name}">↻ Refresh</button>
+      </div>
+      <div class="card-body"><div class="small" style="color:#44403c">${m.memory}</div></div>
+    </div>
+    <div class="cash-strip">${tiles}</div>
+    <div class="finance-grid">
+      <div class="col">
+        <div class="card"><div class="card-header"><div class="card-title">Signals <span class="accent">/ what changed</span></div></div><div>${signals || '<div class="card-body muted small">No signals.</div>'}</div></div>
+        ${table(m.table)}
+        ${table(m.table2)}
+      </div>
+      <div class="col">
+        <div class="card"><div class="card-header"><div class="card-title">Approve to execute <span class="accent">/ ${(m.approvals || []).length} pending</span></div></div>
+          <div class="card-body">
+            <div class="trust-banner"><strong>Nothing runs without you.</strong> Every action below is a draft. Approve executes it through the connected tool; Decline discards it.</div>
+            ${approvals || '<div class="muted small">Nothing pending.</div>'}
+          </div></div>
+        <div class="card"><div class="card-header"><div class="card-title">Next integrations</div></div>
+          <div class="card-body"><div class="stub-features">${(m.next || []).map(n => `<div>${n}</div>`).join('')}</div></div></div>
+      </div>
+    </div>`;
+
+  view.querySelectorAll('[data-approve]').forEach(b => b.addEventListener('click', async () => {
+    const id = b.dataset.approve; const a = (m.approvals || []).find(x => x.id === id);
+    const at = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    let exec = null;
+    if (typeof executeApproval === 'function' && EXEC[id] && sosMcp) {
+      b.textContent = 'Executing…'; b.disabled = true;
+      exec = await executeApproval(id);
+      if (exec && !exec.ok) { b.textContent = 'Approve'; b.disabled = false; showToast('Not executed · ' + exec.text); return; }
+    }
+    approvedActions[id] = exec ? { at, result: exec.text, url: exec.url } : at;
+    try { localStorage.setItem('sos.approved', JSON.stringify(approvedActions)); } catch (e) {}
+    if (typeof memory !== 'undefined' && Array.isArray(memory.decisions)) { memory.decisions.push({ date: new Date().toISOString().slice(0, 10), text: `Approved: ${a.type} — ${a.target}` }); saveMemory(memory); }
+    if (window.sendPrompt) window.sendPrompt(`Execute approved StartupOS action [${a.type}] for ${a.target}:\n${a.preview}`);
+    showToast(exec ? `Done · ${exec.text}` : `Approved · ${a.type}`);
+    renderModule(name);
+    if (exec && name === 'build' && typeof loadBuildLive === 'function') loadBuildLive();
+  }));
+  view.querySelectorAll('[data-decline]').forEach(b => b.addEventListener('click', () => { b.closest('.approve-row').remove(); showToast('Declined · discarded'); }));
+  view.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => {
+    const row = b.closest('.approve-row'); const pre = row.querySelector('.approve-preview');
+    if (pre.isContentEditable) { pre.contentEditable = 'false'; pre.style.borderLeftColor = '#d6d3d1'; b.textContent = 'Edit'; showToast('Draft updated'); }
+    else { pre.contentEditable = 'true'; pre.style.borderLeftColor = '#2563eb'; pre.focus(); b.textContent = 'Done'; }
+  }));
+  view.querySelectorAll('[data-focus-approval]').forEach(b => b.addEventListener('click', () => {
+    const el = document.getElementById('approval-' + b.dataset.focusApproval);
+    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.style.boxShadow = '0 0 0 2px #2563eb'; setTimeout(() => el.style.boxShadow = '', 1600); }
+  }));
+  view.querySelectorAll('[data-refresh-module]').forEach(b => b.addEventListener('click', () => {
+    if (name === 'build' && sosMcp) { b.textContent = '↻ Refreshing…'; loadBuildLive().then(() => showToast('Build refreshed from Linear + Vercel')); return; }
+    if (window.cowork && window.cowork.callMcpTool) { if (window.sendPrompt) window.sendPrompt(`Refresh the StartupOS ${m.title} module snapshot from ${m.source} and re-bake MODULE_SNAPSHOTS.${name}.`); showToast('Refresh requested'); }
+    else showToast('Live refresh runs inside Cowork · showing snapshot');
+  }));
+}
+
+Object.keys(MODULE_SNAPSHOTS).forEach(renderModule);
+
+
+// ─────────────────────────────────────────────────────────────────────
+// LIVE BRIDGE — claude.ai artifact runtime (`claude.use("mcp")`).
+// When the page is opened as a published artifact, connector calls run
+// with the viewer's own Brex / Linear / Vercel credentials. Outside that
+// runtime every helper resolves null and the page stays on snapshots.
+// ─────────────────────────────────────────────────────────────────────
+let sosMcp = null;            // resolved namespace or null
+let sosMcpReady = null;       // promise
+function getMcp() {
+  if (sosMcpReady) return sosMcpReady;
+  sosMcpReady = (window.claude && typeof window.claude.use === 'function')
+    ? window.claude.use('mcp').then(ns => { sosMcp = ns || null; return sosMcp; }).catch(() => null)
+    : Promise.resolve(null);
+  return sosMcpReady;
+}
+// Human copy per error code — never one generic banner.
+function mcpErrorCopy(e, server) {
+  const c = e && e.code;
+  if (c === 'needs_reauth') return `Reconnect ${server} in claude.ai Settings → Connectors`;
+  if (c === 'server_not_connected') return `Add ${server} in claude.ai Settings → Connectors`;
+  if (c === 'selection_required') return `Choose which ${server} connector to use (prompt from claude.ai)`;
+  if (c === 'not_in_manifest') return `${server} tool not in this page's manifest`;
+  if (c === 'blocked_by_policy' || c === 'approval_required') return `${server}: blocked by org policy`;
+  if (c === 'server_unavailable') return `${server} unreachable — try again shortly`;
+  if (c === 'tool_error') return `${server} reported: ${e.message || 'tool error'}`;
+  if (c === 'not_granted' || c === 'capability_disabled') return 'Live data not granted in this view';
+  return (e && e.message) ? `${server}: ${e.message}` : `${server}: unknown error`;
+}
+async function mcpCall(server, tool, input, opts) {
+  const ns = await getMcp();
+  if (!ns) throw { code: 'not_granted', message: 'mcp unavailable' };
+  const r = await ns.callTool(server, tool, input || {}, opts);
+  return r && r.payload !== undefined ? r.payload : r;
+}
+function updateConnectButtons() {
+  const a = document.getElementById('apollo-btn'); const p = document.getElementById('posthog-btn');
+  if (sosMcp) {
+    if (a) { a.textContent = '● Brex · Linear · Vercel live'; a.classList.add('done'); a.title = 'Connector calls run with your claude.ai credentials'; }
+    if (p) { p.textContent = 'PostHog · snapshot'; p.classList.remove('done'); }
+  }
+}
+
+// ── Finance: route loadBrexFinance through the runtime when present ──
+function getBrexCaller() {
+  return getMcp().then(ns => {
+    if (ns) return (tool, input) => mcpCall('Brex', tool, input);
+    if (window.cowork && window.cowork.callMcpTool) return (tool, input) => window.cowork.callMcpTool('mcp__4887702f-1c8b-43ae-a14c-8f6c7535297f__' + tool, input);
+    return null;
+  });
+}
+
+// ── Build: live Linear + Vercel ──
+const VERCEL_TEAM = 'team_rTpjbAHqJufb8oQPlY2yfUMQ';
+const VERCEL_PROJECTS = [
+  { id: 'prj_YkQd4L6Lu8YQyZiHg1hkxYbd7GUE', name: 'threatmodel-frontend-design', url: 'https://vercel.com/unitone/threatmodel-frontend-design' },
+  { id: 'prj_9Al8iKyr97rvv3kIisPVOW6Te2fO', name: 'shieldreply', url: 'https://vercel.com/unitone/shieldreply' },
+  { id: 'prj_1vlPb44zU5MSYSeDO9HCunJXnu6k', name: 'v0-unitone-website', url: 'https://vercel.com/unitone/v0-unitone-website' }
+];
+const shortDate = iso => { const d = new Date(iso); return isNaN(d) ? '—' : d.toLocaleDateString([], { month: 'short', day: 'numeric' }); };
+
+async function loadBuildLive() {
+  const m = MODULE_SNAPSHOTS.build;
+  const ns = await getMcp(); if (!ns) return false;
+  const errors = [];
+  const [issuesRes, ...deployRes] = await Promise.allSettled([
+    mcpCall('Linear', 'list_issues', { limit: 100, fields: ['title', 'status', 'statusType', 'priority', 'assignee', 'project', 'updatedAt', 'url', 'labels', 'createdAt'] }),
+    ...VERCEL_PROJECTS.map(p => mcpCall('Vercel', 'list_deployments', { projectId: p.id, teamId: VERCEL_TEAM }))
+  ]);
+  if (issuesRes.status === 'fulfilled') {
+    const issues = (issuesRes.value && issuesRes.value.issues) || [];
+    const open = issues.filter(i => !['completed', 'canceled'].includes(i.statusType) && !['Done', 'Canceled', 'Duplicate'].includes(i.status));
+    const hot = open.filter(i => i.priority && (i.priority.value === 1 || i.priority.value === 2));
+    const inprog = open.filter(i => i.status === 'In Progress');
+    m.tiles[0] = { label: 'Open issues', val: String(open.length), sub: `of ${issues.length} fetched · live from Linear` };
+    m.tiles[1] = { label: 'Urgent / High', val: String(hot.length), sub: `${hot.filter(i => i.priority.value === 1).length} urgent · ${hot.filter(i => i.priority.value === 2).length} high · ${hot.filter(i => !i.assignee).length} unassigned`, cls: hot.length ? 'warn' : '' };
+    m.tiles[2] = { label: 'In progress', val: String(inprog.length), sub: inprog.slice(0, 3).map(i => i.id).join(', ') + (inprog.length > 3 ? '…' : '') };
+    const kindFor = i => i.priority?.value === 1 ? 'reply' : i.priority?.value === 2 ? 'click' : i.status === 'In Progress' ? 'open' : 'bounce';
+    m.signals = hot.concat(inprog).filter((v, i, a) => a.findIndex(x => x.id === v.id) === i).slice(0, 5).map(i => ({
+      kind: kindFor(i), title: `${i.id} · ${i.title}`,
+      meta: `${i.priority?.name || 'No priority'} · ${(i.labels || []).join(', ') || i.status} · ${i.assignee || 'unassigned'} · updated ${shortDate(i.updatedAt)}`,
+      action: 'Open in Linear', href: i.url
+    }));
+    // keep the executable approvals, but point the assign one at the top unassigned High if UNI-158 is gone
+    m.liveIssues = issues;
+  } else errors.push(mcpErrorCopy(issuesRes.reason, 'Linear'));
+  const deployRows = [];
+  deployRes.forEach((r, idx) => {
+    const p = VERCEL_PROJECTS[idx];
+    if (r.status !== 'fulfilled') { errors.push(mcpErrorCopy(r.reason, 'Vercel')); return; }
+    const list = (r.value && r.value.deployments && r.value.deployments.deployments) || [];
+    const prod = list.find(d => d.target === 'production') || list[0];
+    if (!prod) return;
+    const failed = list.filter(d => d.state === 'ERROR').length;
+    deployRows.push([p.name, pill(prod.state, prod.state === 'READY' ? 'paid' : 'unpaid'), shortDate(prod.created), (prod.meta?.githubCommitMessage || 'manual deploy').split('\n')[0].slice(0, 70) + (failed ? ` · ${failed} failed build${failed > 1 ? 's' : ''}` : ''), link(p.url)]);
+  });
+  if (deployRows.length) { m.table2.rows = deployRows; m.tiles[3] = { label: 'Prod deploys', val: `${deployRows.filter(r => r[1].includes('READY')).length} / ${deployRows.length}`, sub: 'READY · live from Vercel' }; }
+  m.liveAt = new Date().toISOString(); m.liveErrors = errors;
+  renderModule('build');
+  return true;
+}
+
+// ── Executable approvals (Linear write path, observed shape) ──
+const EXEC = {
+  'assign-158': { server: 'Linear', tool: 'save_issue', input: { id: 'UNI-158', assignee: 'Alexey', dueDate: '2026-09-10' }, done: r => `${r.id} → ${r.assignee || 'assigned'} · due ${r.dueDate || '—'}` },
+  'jci-160':    { server: 'Linear', tool: 'save_issue', input: { id: 'UNI-160', priority: 2, dueDate: '2026-09-08' }, done: r => `${r.id} → ${r.priority?.name || 'High'} · due ${r.dueDate || '—'}` },
+  'prio-153':   { server: 'Linear', tool: 'save_issue', input: { id: 'UNI-153', priority: 2 }, done: r => `${r.id} → ${r.priority?.name || 'High'}` },
+  'jci-159':    { server: 'Linear', tool: 'save_issue', input: { id: 'UNI-159', blockedBy: ['UNI-155'], project: 'JCI Controls POC' }, done: r => `${r.id} blocked by UNI-155 · project set` },
+  'merge-150':  { server: 'Linear', tool: 'save_issue', input: { id: 'UNI-151', duplicateOf: 'UNI-150', state: 'Canceled' }, done: r => `${r.id} marked duplicate of UNI-150` },
+  'triage-jci': { server: 'Linear', tool: 'save_issue', input: { team: 'UnitoneSentinel', title: 'Triage: Metasys basic-services-dotnet scan findings', project: 'JCI Controls POC', priority: 2, addLabels: ['Bug'], description: 'Created from StartupOS Security → Approve. Break the scan findings into one issue per High/Critical item and link the report.' }, done: r => `Created ${r.id} in JCI Controls POC` }
+};
+async function executeApproval(id) {
+  const x = EXEC[id]; if (!x) return null;
+  const ns = await getMcp(); if (!ns) return null;
+  try {
+    const r = await mcpCall(x.server, x.tool, x.input);
+    return { ok: true, text: x.done(r || {}), url: r && r.url };
+  } catch (e) {
+    return { ok: false, text: mcpErrorCopy(e, x.server), code: e && e.code };
+  }
+}
+
+// Boot: light up live features when the runtime answers (never on first synchronous run).
+getMcp().then(ns => {
+  if (!ns) return;
+  updateConnectButtons();
+  loadBrexFinance();
+  loadBuildLive();
+});
+
+
+showView('sales');
+loadPostHog();
+loadBrexFinance();
+
+// Auto-refresh Brex every 15 minutes when viewed inside Cowork.
+// Outside Cowork, the call exits cheaply (window.cowork.callMcpTool is undefined).
+// The scheduled task `refresh-brex-snapshot` keeps the baked snapshot fresh for browser views.
+setInterval(() => {
+  if (sosMcp || (window.cowork && window.cowork.callMcpTool)) {
+    loadBrexFinance();
+    if (sosMcp && typeof loadBuildLive === 'function') loadBuildLive();
+  } else {
+    // Re-render so the "last refreshed" age string ticks up
+    renderFinance();
+  }
+}, 15 * 60 * 1000);
+
+// Also tick the age string every minute so it stays current without refetching
+setInterval(() => {
+  const finRefresh = document.getElementById('fin-refresh-status');
+  if (finRefresh && liveBrex.refreshedAt && !liveBrex.loading) {
+    const t = new Date(liveBrex.refreshedAt);
+    const ageMin = Math.round((Date.now() - t.getTime()) / 60000);
+    const ageStr = ageMin < 1 ? 'just now' : ageMin < 60 ? ageMin + ' min ago' : Math.round(ageMin/60) + ' hr ago';
+    const sourceLabel = liveBrex.source === 'live' ? '● live' : '○ snapshot';
+    const sourceColor = liveBrex.source === 'live' ? '#16a34a' : '#2563eb';
+    finRefresh.innerHTML = `<span style="color:${sourceColor}">${sourceLabel}</span> · ${ageStr}`;
+  }
+}, 60 * 1000);
+</script>
+</body>
+</html>

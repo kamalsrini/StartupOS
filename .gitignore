@@ -1,0 +1,15 @@
+# secrets
+.env
+*.env.local
+# local-only scratch
+_to_delete/
+.DS_Store
+# build/runtime
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+node_modules/
+.next/
+pgdata/
+.git-old/
