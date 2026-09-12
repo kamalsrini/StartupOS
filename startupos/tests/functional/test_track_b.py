@@ -169,6 +169,7 @@ def test_scheduler_builds_jobs_in_tenant_timezone(monkeypatch):
         "chief_of_staff",
         "morning_pulse",
         "evening_digest",
+        "context_pack",
         "tick_15m",
         "service_asks",
         "weekly_review",
@@ -176,3 +177,28 @@ def test_scheduler_builds_jobs_in_tenant_timezone(monkeypatch):
     assert "hour='7'" in jobs["morning_pulse"] and "hour='18'" in jobs["evening_digest"]
     assert "hour='6'" in jobs["chief_of_staff"] and "minute='30'" in jobs["chief_of_staff"]
     assert "minute='*/15'" in jobs["tick_15m"] and "day_of_week='fri'" in jobs["weekly_review"]
+
+
+def test_tick_runs_signal_engine_before_skills(conn, monkeypatch):
+    """Spec audit 2026-09-12: signals must be computed by the daemon itself, not by a manual `make signals`."""
+    import os
+
+    from common.db import get_conn as _get_conn
+
+    conn.execute("DELETE FROM issues WHERE id = 'TICK-1'")
+    conn.execute(
+        "INSERT INTO issues (tenant_id, id, title, status, status_type, priority) VALUES ('unitone','TICK-1','tick test',"
+        "'Backlog','backlog',2)"
+    )
+    conn.execute("DELETE FROM signals WHERE id = 'build.unassigned_high:TICK-1'")
+    conn.commit()
+    dsn = os.environ.get("STARTUPOS_TEST_DSN", "postgresql://postgres@localhost:5432/startupos_test")
+    monkeypatch.setattr(scheduler, "get_conn", lambda **kw: _get_conn(dsn, tenant_id="unitone"))
+    scheduler.run_signal_engine("unitone")
+    row = conn.execute(
+        "SELECT id FROM signals WHERE id = 'build.unassigned_high:TICK-1' AND resolved_at IS NULL"
+    ).fetchone()
+    assert row is not None
+    conn.execute("DELETE FROM issues WHERE id = 'TICK-1'")
+    conn.execute("DELETE FROM signals WHERE id = 'build.unassigned_high:TICK-1'")
+    conn.commit()

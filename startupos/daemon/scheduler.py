@@ -83,7 +83,38 @@ def run_approved(tenant_id: str | None = None) -> list[dict[str, Any]]:
     return done
 
 
+def run_signal_engine(tenant_id: str | None = None) -> dict[str, Any]:
+    """Evaluate the Tier-0 rules over ingested state (spec audit 2026-09-12: this was never scheduled in
+    production, so the deployed daemon proposed nothing). Runs first in every 15-minute tick."""
+    tenant_id = tenant_id or settings.tenant_id
+    from signals import engine as signal_engine
+
+    with get_conn(tenant_id=tenant_id) as conn:
+        out = signal_engine.run(conn, tenant_id)
+    log.info(
+        "signals for %s: %s",
+        tenant_id,
+        {k: v for k, v in out.items() if k in ("created", "updated", "resolved", "open")},
+    )
+    return out
+
+
+def compile_context_pack(tenant_id: str | None = None) -> str:
+    """Nightly context pack (Architecture Brief §2.1) — one deterministic compile; Tier-1 summarize is opt-in."""
+    tenant_id = tenant_id or settings.tenant_id
+    from brain import pack as brain_pack
+
+    with get_conn(tenant_id=tenant_id) as conn:
+        content = brain_pack.compile(conn, tenant_id)
+    log.info("context pack for %s: ~%d tokens", tenant_id, len(content) // 4)
+    return content
+
+
 def tick_15m(tenant_id: str | None = None) -> None:
+    try:
+        run_signal_engine(tenant_id)
+    except Exception as exc:  # signals failing must not stop skills/executors
+        log.exception("signal engine failed: %s", type(exc).__name__)
     run_signal_skills(tenant_id)
     run_approved(tenant_id)
 
@@ -178,6 +209,11 @@ def job_table(tenant_id: str) -> list[dict[str, Any]]:
             "id": "evening_digest",
             "cron": {"hour": 18, "minute": 0},
             "fn": lambda: run_skill("cockpit.evening_digest", tenant_id),
+        },
+        {
+            "id": "context_pack",
+            "cron": {"hour": 2, "minute": 0},
+            "fn": lambda: compile_context_pack(tenant_id),
         },
         {"id": "tick_15m", "cron": {"minute": "*/15"}, "fn": lambda: tick_15m(tenant_id)},
         {"id": "service_asks", "cron": {"second": "*/30"}, "fn": lambda: service_asks(tenant_id)},
