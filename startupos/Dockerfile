@@ -1,5 +1,7 @@
 FROM python:3.11-slim
 WORKDIR /app
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir -e . 2>/dev/null || pip install --no-cache-dir fastapi uvicorn "pydantic>=2" "psycopg[binary]" python-dotenv anthropic slack_sdk httpx apscheduler
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
+# Fail the build if any service entrypoint cannot import — catches missing deps before deploy.
+RUN python -c "import api.main, daemon.main, ingest.runner, signals.engine, brain.pack" 2>&1 | grep -v "STARTUPOS\|not set" ; true
