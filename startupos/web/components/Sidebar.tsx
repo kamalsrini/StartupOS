@@ -37,6 +37,7 @@ export default function Sidebar({ me }: { me: Me | null }) {
       <div className="nav-group-label">Workspace</div>
       {item("/cockpit", "Cockpit")}
       {item("/onboarding", "Onboarding")}
+      {item("/settings", "Settings")}
       <div className="nav-group-label">Modules</div>
       {MODULES.map(([name, label, stub]) => item(`/m/${name}`, label, stub))}
       <div className="sidebar-foot">

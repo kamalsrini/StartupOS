@@ -16,6 +16,7 @@ import signal
 import sys
 import time
 
+from auth import slack_install
 from common import secrets
 from common.settings import settings
 from daemon import scheduler, skills
@@ -62,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     secrets.check_master_key(log)  # malformed → RuntimeError before any job runs; unset → one warning
+    slack_install.warn_if_unconfigured(log)  # Sprint 3b: no Slack app → HTTP install/events/interactivity are off
     sched = scheduler.build_scheduler(args.tenant)  # None → every active tenant + refresh_tenants every 5 min
     gateway = None if args.no_slack else slack_gateway.start()
     stop = {"flag": False}

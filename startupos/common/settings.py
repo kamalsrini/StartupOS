@@ -59,6 +59,23 @@ class Settings:
         """
         return _env("STARTUPOS_MASTER_KEY")
 
+    # --- Slack app (Sprint 3b, Track I) --------------------------------------------------------------
+    # ONE Slack app serves the whole install — that is how Slack distribution works. These three are
+    # install-level operator values, never per tenant; the per-tenant bot tokens live in `tenant_secrets`
+    # (`kv:slack_bot_token`) and are never environment variables. Read at call time so tests can set them.
+
+    def slack_client_id(self) -> str | None:
+        """STARTUPOS_SLACK_CLIENT_ID — Slack app → Basic Information → App Credentials."""
+        return _env("STARTUPOS_SLACK_CLIENT_ID")
+
+    def slack_client_secret(self) -> str | None:
+        """STARTUPOS_SLACK_CLIENT_SECRET — exchanged for a bot token at oauth.v2.access. Never logged."""
+        return _env("STARTUPOS_SLACK_CLIENT_SECRET")
+
+    def slack_signing_secret(self) -> str | None:
+        """STARTUPOS_SLACK_SIGNING_SECRET — HMAC key for every inbound Slack request (auth/slack_sig.py)."""
+        return _env("STARTUPOS_SLACK_SIGNING_SECRET")
+
     def secret(self, ref: str, *, conn=None, tenant_id: str | None = None) -> str | None:
         """Resolve a secret_ref.
 

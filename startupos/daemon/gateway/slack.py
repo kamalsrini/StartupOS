@@ -5,8 +5,14 @@
     pending                   → list pending approvals
     anything else             → ask.answer
 
-Starts only when SLACK_APP_TOKEN and SLACK_BOT_TOKEN exist. `handle_text` is pure and testable.
-Tokens are read via common.settings and never logged.
+Starts only under STARTUPOS_DEV=1, and only when SLACK_APP_TOKEN and SLACK_BOT_TOKEN exist. `handle_text` is
+pure and testable. Tokens are read via common.settings and never logged.
+
+Sprint 3b (PE follow-up): Socket Mode is a **dev-only** path. In production Slack arrives over HTTPS
+(`POST /slack/events` → `tenant_jobs` → `daemon/jobs.py::run_slack_event`), which posts with the tenant's own bot
+token. The Socket Mode listener holds one process-wide operator token, so replying with it on behalf of a
+resolved tenant B would post as the operator — `reply_token` therefore resolves the *resolved tenant's* own
+credential and falls back to the operator token only for the install tenant.
 
 Tenant resolution (Sprint 3a, Track T): every event resolves its tenant from the Slack user through the
 SECURITY DEFINER `auth_lookup_slack` — the tenant is always derived from the identity, for asks as much as for
@@ -23,6 +29,7 @@ from typing import Any
 
 import psycopg
 
+from common import secrets
 from common.db import get_conn
 from common.models import Decision
 from common.settings import settings
@@ -39,15 +46,28 @@ def _dsn() -> str:
     return getattr(settings, "app_dsn", None) or settings.database_url
 
 
+def lookup_slack_user(conn: psycopg.Connection, slack_user_id: str) -> tuple[str, str] | None:
+    """Slack user id → (tenant_id, user_id) on an ALREADY OPEN, tenant-unbound connection. None if unmapped.
+
+    The SECURITY DEFINER `auth_lookup_slack` is the one mapping from a Slack identity to a StartupOS user, and
+    this is it in the one place. `resolve_slack_user` opens its own connection around it (the Socket Mode
+    gateway); callers that already hold an unbound connection — `daemon/slack_actions.py` on the HTTP path —
+    call this directly instead of opening a second one.
+    """
+    if not slack_user_id:
+        return None
+    row = conn.execute("SELECT * FROM auth_lookup_slack(%s)", (slack_user_id,)).fetchone()
+    if not row:
+        return None
+    return row["tenant_id"], row["user_id"]
+
+
 def resolve_slack_user(slack_user_id: str, dsn: str | None = None) -> tuple[str, str] | None:
     """Slack user id → (tenant_id, user_id) via the SECURITY DEFINER lookup, with no tenant bound. None if unmapped."""
     if not slack_user_id:
         return None
     with get_conn(dsn or _dsn(), tenant_id="") as anon:
-        row = anon.execute("SELECT * FROM auth_lookup_slack(%s)", (slack_user_id,)).fetchone()
-    if not row:
-        return None
-    return row["tenant_id"], row["user_id"]
+        return lookup_slack_user(anon, slack_user_id)
 
 
 def resolve_event_tenant(
@@ -145,26 +165,43 @@ def available() -> bool:
     return bool(app and bot)
 
 
-def start(tenant_id: str | None = None) -> Any | None:
-    """Connect Socket Mode and return the client, or None when tokens are missing.
+def reply_token(conn: psycopg.Connection, tenant_id: str, *, operator_token: str | None) -> str | None:
+    """The token a Socket Mode reply must post with: the RESOLVED tenant's own Slack credential.
 
-    `tenant_id` is accepted for the dev path only: with STARTUPOS_DEV=1 it overrides the fallback tenant for
-    unmapped users. In production it is ignored — the tenant always comes from the Slack user mapping.
+    The Socket Mode client holds one process-wide operator token. Posting a reply for tenant B with it would
+    post as the operator on B's behalf, so the operator token is a fallback for the install tenant only (the
+    single-operator dev install that never ran onboarding). No credential → None, and the reply is dropped.
     """
-    app_token, bot_token = _tokens()
-    if not (app_token and bot_token):
-        log.info("slack gateway disabled: SLACK_APP_TOKEN/SLACK_BOT_TOKEN not set")
-        return None
+    try:
+        token = secrets.credential_for_source(conn, tenant_id, "slack")
+    except Exception as exc:  # a missing master key is "no credential", never a crash in the listener
+        log.warning("no usable Slack credential for %s: %s", tenant_id, type(exc).__name__)
+        token = None
+    if token:
+        return token
+    if tenant_id == settings.tenant_id:
+        return operator_token
+    return None
+
+
+def _new_web_client(token: str) -> Any:
+    """A WebClient bound to one tenant's token. A seam: tests replace it instead of reaching Slack."""
     from slack_sdk import WebClient
-    from slack_sdk.socket_mode import SocketModeClient
-    from slack_sdk.socket_mode.request import SocketModeRequest
-    from slack_sdk.socket_mode.response import SocketModeResponse
 
-    dev_tenant = (tenant_id or settings.tenant_id) if dev_mode() else None
-    web = WebClient(token=bot_token)
-    client = SocketModeClient(app_token=app_token, web_client=web)
+    return WebClient(token=token)
 
-    def on_request(sm: SocketModeClient, req: SocketModeRequest) -> None:
+
+def _reply_client(web: Any, operator_token: str | None, token: str) -> Any:
+    """The client to reply with — the gateway's own when the token is the operator's, else a per-tenant one."""
+    return web if token == operator_token else _new_web_client(token)
+
+
+def _listener(web: Any, bot_token: str | None, dev_tenant: str | None) -> Any:
+    """The Socket Mode events_api listener. Module level so it is testable without a socket."""
+
+    def on_request(sm: Any, req: Any) -> None:
+        from slack_sdk.socket_mode.response import SocketModeResponse
+
         if req.type != "events_api":
             return
         sm.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
@@ -174,6 +211,8 @@ def start(tenant_id: str | None = None) -> Any | None:
         text = event.get("text") or ""
         channel = event.get("channel")
         slack_user = event.get("user") or ""
+        user_tenant: str | None = None
+        token: str | None = None
         try:
             routed = resolve_event_tenant(slack_user, dev_tenant=dev_tenant)
             if not routed:
@@ -181,13 +220,46 @@ def start(tenant_id: str | None = None) -> Any | None:
                 return
             user_tenant, user_id = routed
             with get_conn(_dsn(), tenant_id=user_tenant) as conn:
+                token = reply_token(conn, user_tenant, operator_token=bot_token)
                 reply = handle_text(conn, user_tenant, text, user=user_id)
         except Exception as exc:
             log.exception("gateway error: %s", type(exc).__name__)
             reply = f"Something went wrong ({type(exc).__name__}). It's in the run ledger."
-        web.chat_postMessage(channel=channel, text=reply, thread_ts=event.get("thread_ts"))
+        if token is None and user_tenant is None:
+            token = bot_token  # nothing resolved: the error line goes out on the operator's own connection
+        if not token:
+            log.warning("no Slack credential for tenant %s: the Socket Mode reply was not posted", user_tenant)
+            return
+        _reply_client(web, bot_token, token).chat_postMessage(
+            channel=channel, text=reply, thread_ts=event.get("thread_ts")
+        )
 
-    client.socket_mode_request_listeners.append(on_request)
+    return on_request
+
+
+def start(tenant_id: str | None = None) -> Any | None:
+    """Connect Socket Mode and return the client, or None when this is not a dev process or tokens are missing.
+
+    Socket Mode is dev-only: production Slack is served over HTTP (`POST /slack/events`). `tenant_id` overrides
+    the fallback tenant for unmapped users, which is a dev-only concept too.
+    """
+    if not dev_mode():
+        log.info(
+            "slack gateway not started: Slack is served over HTTP now (POST /slack/events → tenant_jobs → "
+            "run_slack_event); Socket Mode is dev-only (STARTUPOS_DEV=1)"
+        )
+        return None
+    app_token, bot_token = _tokens()
+    if not (app_token and bot_token):
+        log.info("slack gateway disabled: SLACK_APP_TOKEN/SLACK_BOT_TOKEN not set")
+        return None
+    from slack_sdk import WebClient
+    from slack_sdk.socket_mode import SocketModeClient
+
+    dev_tenant = tenant_id or settings.tenant_id
+    web = WebClient(token=bot_token)
+    client = SocketModeClient(app_token=app_token, web_client=web)
+    client.socket_mode_request_listeners.append(_listener(web, bot_token, dev_tenant))
     client.connect()
-    log.info("slack gateway connected (socket mode)")
+    log.info("slack gateway connected (socket mode, dev)")
     return client

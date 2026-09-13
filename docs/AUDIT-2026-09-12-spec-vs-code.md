@@ -85,14 +85,14 @@ Unit 178 functions / 18 files; functional 31 / 9 files; regression 7 / 3 files. 
 3. ~~Per-tenant credentials impossible~~ **Fixed 3a.** Was: (`secret()` env-only). → `tenant_secrets` (encrypted) resolved by `kv:` refs; ingest takes `(tenant_id, connection)`.
 4. ~~Onboarding compile does not ingest.~~ **Fixed 3a.** → enqueue backfill per connected source, then engine + pack, return real counts.
 5. No Tier-1 extraction on day 0. → `onboarding.extract` T1 skill via the `asks` queue pattern.
-6. Pulse/digest never reach Slack; no signal → Slack. → honour `pulse_channel`; post high-severity signals on tick.
+6. ~~Pulse/digest never reach Slack; no signal → Slack.~~ **Fixed 3b.** → honour `pulse_channel`; post high-severity signals on tick.
 7. Sales has zero skills and no Apollo ingest (the wedge). → `ingest/apollo.py` + `sales.reply_draft` (T2) + `sales.enroll_proposal` (T1).
-8. Slack install + Block Kit buttons absent. → OAuth install route with per-tenant bot token; interactive approve/decline.
+8. ~~Slack install + Block Kit buttons absent.~~ **Fixed 3b.** → OAuth install route with per-tenant bot token; interactive approve/decline.
 9. ~~First pulse for a new tenant needs a human.~~ **Fixed 3a.** → on fifth-card confirm, enqueue CoS + pulse for that tenant.
 10. BYO key + weekly review placeholders. → `tenants.anthropic_key_ref`; real weekly-review skill.
 
 ## Proposed Sprint 3 (in this order)
 
 **3a — Multi-tenant runtime (gaps 1, 3, 4, 9) — SHIPPED 2026-09-12 (see decision log; PE review fixed two cross-tenant credential defects):** tenant iteration in daemon/ingest/gateway; `tenant_secrets` with envelope encryption; onboarding compile triggers backfill → engine → pack → CoS → pulse. Acceptance: create a second tenant through the API with its own Linear key and see a real pulse without touching `.env`.
-**3b — Delivery (gap 6, 8):** pulse/digest/high signals to Slack per `pulse_channel`; Slack install + buttons.
+**3b — Delivery (gap 6, 8) — SHIPPED 2026-09-13 (see decision log):** pulse/digest/high signals to Slack per `pulse_channel`; Slack install + buttons.
 **3c — Sales wedge (gap 7):** Apollo ingest, reply draft, enrollment proposal, weekly review.

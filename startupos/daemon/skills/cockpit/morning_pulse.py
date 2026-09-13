@@ -5,7 +5,7 @@ System = latest context pack (cached) + instructions. Outcome lands in runs.outc
 
 from __future__ import annotations
 
-from daemon import llm
+from daemon import delivery, llm
 from daemon.skills.base import Ctx, Skill, register, system_prompt
 
 NAME = "cockpit.morning_pulse"
@@ -56,6 +56,13 @@ def _fallback(ctx: Ctx) -> str:
 
 
 def run(ctx: Ctx) -> str:
+    """Produce the pulse, deliver it to the tenant's Slack (Sprint 3b), and still return the text for the web."""
+    text = _produce(ctx)
+    delivery.deliver_text(ctx["conn"], ctx["tenant_id"], "pulse", text, ctx.get("now"))
+    return text
+
+
+def _produce(ctx: Ctx) -> str:
     try:
         res = llm.call(
             2,

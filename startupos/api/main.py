@@ -3,8 +3,9 @@
 Rules: reads Postgres tables directly; never calls a model; never holds or returns a secret (connections carry
 secret_ref only); deciding an approval only flips pending → approved|declined — execution is the daemon's job.
 
-Auth: every route except /health, /auth/google, /auth/google/callback, /auth/bootstrap and POST /onboarding/tenant
-requires a principal (Bearer token or sos_session cookie); the tenant is always derived from the user.
+Auth: every route except the ones in PUBLIC_PATHS below requires a principal (Bearer token or sos_session cookie);
+the tenant is always derived from the user. The public list is enumerated once, here, and a test walks
+`app.routes` to prove nothing else slipped out of the fence.
 """
 
 from __future__ import annotations
@@ -18,11 +19,36 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.deps import api_dsn, optional_principal
-from api.routers import approvals, asks, auth, cockpit, finance, modules, onboarding
-from auth import config
+from api.routers import approvals, asks, auth, cockpit, finance, modules, onboarding, slack
+from auth import config, slack_install
 from auth.identity import Principal
 from common import secrets
 from common.db import get_conn
+
+# Routes that answer without a StartupOS principal, and what authenticates them instead. Everything else needs a
+# Bearer token or a session cookie; tests/functional/test_slack_install.py walks app.routes and asserts exactly this.
+#   /health, /, /docs…                          public by design, no tenant data
+#   /auth/google*, /auth/bootstrap              the sign-in flow itself (state cookie / bootstrap token)
+#   POST /onboarding/tenant                     sign-up (bootstrap token or a verified Google id_token)
+#   /slack/oauth/callback                       the signed `state` token carries the tenant (10-minute max age)
+#   /slack/events, /slack/interactivity         Slack's HMAC signature (auth/slack_sig.py) + team_id → installation
+PUBLIC_PATHS: frozenset[str] = frozenset(
+    {
+        "/",
+        "/health",
+        "/docs",
+        "/docs/oauth2-redirect",
+        "/redoc",
+        "/openapi.json",
+        "/auth/google",
+        "/auth/google/callback",
+        "/auth/bootstrap",
+        "/onboarding/tenant",
+        "/slack/oauth/callback",
+        "/slack/events",
+        "/slack/interactivity",
+    }
+)
 
 
 def check_startup_config() -> None:
@@ -34,6 +60,7 @@ def check_startup_config() -> None:
         )
     config.session_secret()  # logs the dev warning once
     secrets.check_master_key(logging.getLogger("api"))  # malformed → RuntimeError; unset → one warning (503 on writes)
+    slack_install.warn_if_unconfigured(logging.getLogger("api"))  # no Slack app → /slack/* answer 503, nothing else
 
 
 @asynccontextmanager
@@ -62,6 +89,7 @@ app.include_router(approvals.router)
 app.include_router(onboarding.router)
 app.include_router(cockpit.router)
 app.include_router(asks.router)
+app.include_router(slack.router)
 
 
 @app.get("/health")

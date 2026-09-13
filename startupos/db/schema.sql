@@ -407,7 +407,7 @@ CREATE INDEX IF NOT EXISTS asks_pending ON asks (tenant_id, created_at) WHERE st
 CREATE TABLE IF NOT EXISTS tenant_jobs (
   id            BIGSERIAL PRIMARY KEY,
   tenant_id     TEXT NOT NULL REFERENCES tenants(id),
-  kind          TEXT NOT NULL,                    -- backfill:<source> | signals | context_pack | chief_of_staff | morning_pulse
+  kind          TEXT NOT NULL,                    -- backfill:<source> | signals | context_pack | chief_of_staff | morning_pulse | slack_event
   payload       JSONB NOT NULL DEFAULT '{}',      -- {source} for backfills; `result` is appended when the job finishes
   status        TEXT NOT NULL DEFAULT 'queued',   -- queued | running | done | failed
   attempts      INTEGER NOT NULL DEFAULT 0,
@@ -421,6 +421,25 @@ CREATE TABLE IF NOT EXISTS tenant_jobs (
 CREATE INDEX IF NOT EXISTS tenant_jobs_queue ON tenant_jobs (status, created_at);
 CREATE INDEX IF NOT EXISTS tenant_jobs_tenant ON tenant_jobs (tenant_id, created_at DESC);
 
+-- Slack install (Sprint 3b, Track I) -----------------------------------------------------------------
+-- One Slack workspace ↔ one tenant. The bot token is NOT here: it goes to `tenant_secrets` as
+-- `slack_bot_token` and the tenant's `connections` row for `slack` points at it (`kv:slack_bot_token`), so
+-- delivery and the executors resolve it through common.secrets.credential_for_source unchanged.
+-- `team_id` is UNIQUE: a second tenant installing into a workspace that is already connected is refused
+-- (the callback redirects with ?slack=error&reason=workspace_taken) rather than hijacking the first tenant.
+-- Inbound Slack requests resolve their tenant ONLY through this table (slack_lookup_install, db/rls.sql).
+CREATE TABLE IF NOT EXISTS slack_installations (
+  tenant_id       TEXT PRIMARY KEY REFERENCES tenants(id),
+  team_id         TEXT NOT NULL UNIQUE,             -- Slack workspace id (T…)
+  team_name       TEXT,
+  bot_user_id     TEXT,                             -- the bot's own user id (U…) — used to ignore its own messages
+  default_channel TEXT NOT NULL DEFAULT '#general', -- where deliveries land when the tenant names nothing else
+  installed_by    TEXT,                             -- StartupOS user id that ran the install
+  installed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at      TIMESTAMPTZ                       -- app_uninstalled / tokens_revoked; a revoked row is "not connected"
+);
+CREATE INDEX IF NOT EXISTS slack_installations_live ON slack_installations (team_id) WHERE revoked_at IS NULL;
+
 -- Budgets --------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS budgets (
   tenant_id     TEXT NOT NULL REFERENCES tenants(id),
@@ -432,3 +451,49 @@ CREATE TABLE IF NOT EXISTS budgets (
   state         TEXT NOT NULL DEFAULT 'normal',   -- normal | conserve (>=90%) | exhausted
   PRIMARY KEY (tenant_id, month)
 );
+
+-- Slack delivery (Sprint 3b, Track D) ----------------------------------------------------------------
+-- Where a tenant's Slack posts go. `tenants.pulse_channel` stays web|slack|both and says WHERE the founder
+-- wants the pulse; `tenants.slack_channel` names WHICH Slack channel. 'web' means never post.
+--
+-- The column is NULLABLE with NO default: unset means "use the install's `default_channel`", i.e. the channel the
+-- founder picked in Slack while installing. It shipped NOT NULL DEFAULT '#general', which — since it takes
+-- precedence over the install — silently overrode that choice for every tenant forever. The DO block migrates
+-- once: it drops NOT NULL and the default, then turns rows still holding the untouched '#general' into NULL.
+-- Nothing ever wrote the column before this migration, so every '#general' in it is that untouched default.
+-- Re-applying the schema is a no-op: the guard (a default still present) is false from then on.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS slack_channel TEXT;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'tenants'
+       AND column_name = 'slack_channel' AND column_default IS NOT NULL
+  ) THEN
+    ALTER TABLE tenants ALTER COLUMN slack_channel DROP NOT NULL;
+    ALTER TABLE tenants ALTER COLUMN slack_channel DROP DEFAULT;
+    UPDATE tenants SET slack_channel = NULL WHERE slack_channel = '#general';
+  END IF;
+END $$;
+
+-- One row per outbound post StartupOS makes. `ref` is what makes a delivery unique — signal:<signal_id>,
+-- pulse:<YYYY-MM-DD>, digest:<YYYY-MM-DD>, approval:<approval_id> — and the UNIQUE constraint IS the dedupe:
+-- a conflicting insert means "already delivered", not a query the caller has to remember to run. A row is
+-- claimed `pending` before the post so two daemons racing on the same ref can never both post; it is then
+-- finished `sent` (with the message `ts`, which Track B's chat.update needs), `skipped` or `failed`.
+-- The tenant FK cascades: a delivery is a log line about a tenant, so deleting the tenant (tests, an offboard)
+-- must not be blocked by its Slack history.
+CREATE TABLE IF NOT EXISTS deliveries (
+  id            BIGSERIAL PRIMARY KEY,
+  tenant_id     TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  kind          TEXT NOT NULL,                    -- pulse | digest | signal | approval
+  ref           TEXT NOT NULL,                    -- signal:<id> | pulse:<date> | digest:<date> | approval:<id>
+  channel       TEXT,
+  ts            TEXT,                             -- Slack message ts (chat.update / permalinks)
+  status        TEXT NOT NULL DEFAULT 'pending',  -- pending | sent | skipped | failed
+  error         TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT deliveries_status_check CHECK (status IN ('pending', 'sent', 'skipped', 'failed')),
+  UNIQUE (tenant_id, kind, ref)
+);
+CREATE INDEX IF NOT EXISTS deliveries_tenant_kind ON deliveries (tenant_id, kind, created_at DESC);

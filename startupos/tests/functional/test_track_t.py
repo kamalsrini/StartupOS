@@ -296,6 +296,64 @@ def test_gateway_resolves_tenant_from_slack_user_and_refuses_unknown(conn, tenan
         conn.commit()
 
 
+class _FakeWeb:
+    """A Slack WebClient stand-in that remembers which token it was built with."""
+
+    def __init__(self, token, posted):
+        self.token, self.posted = token, posted
+
+    def chat_postMessage(self, **kw):
+        self.posted.append({"token": self.token, **kw})
+
+    def chat_postEphemeral(self, **kw):
+        self.posted.append({"token": self.token, "ephemeral": True, **kw})
+
+
+class _FakeSM:
+    def send_socket_mode_response(self, response):
+        pass
+
+
+def _event(slack_user: str, text: str):
+    class Req:
+        type = "events_api"
+        envelope_id = "env-1"
+        payload = {"event": {"type": "app_mention", "user": slack_user, "channel": "C1", "text": text}}
+
+    return Req()
+
+
+def test_dev_gateway_replies_with_the_resolved_tenants_own_token(conn, tenants, master, monkeypatch):
+    """PE follow-up (Sprint 3b): the Socket Mode listener holds ONE operator token.
+
+    A reply for tenant B must post with B's own bot token, never the operator's; a tenant with no Slack
+    credential (and that is not the install tenant) gets no reply at all rather than one sent as the operator.
+    """
+    monkeypatch.setenv("STARTUPOS_DEV", "1")
+    monkeypatch.setattr(gateway, "_dsn", lambda: APP_TEST_DSN)
+    ua = bootstrap.upsert_owner(conn, TA, "a@alpha.test")
+    ub = bootstrap.upsert_owner(conn, TB, "b@beta.test")
+    conn.execute("UPDATE users SET slack_user_id = 'U_ALPHA' WHERE id = %s", (ua["id"],))
+    conn.execute("UPDATE users SET slack_user_id = 'U_BETA' WHERE id = %s", (ub["id"],))
+    conn.commit()
+    _connect(TB, "slack", None)  # the connections row…
+    with tenant_conn(TB, APP_TEST_DSN) as c:  # …pointing at B's own encrypted bot token
+        secrets.put(c, TB, "slack_api_key", "xoxb-beta")
+
+    posted: list[dict] = []
+    operator = _FakeWeb("xoxb-operator", posted)
+    monkeypatch.setattr(gateway, "_new_web_client", lambda token: _FakeWeb(token, posted))
+    on_request = gateway._listener(operator, "xoxb-operator", TA)
+
+    on_request(_FakeSM(), _event("U_BETA", "pending"))
+    assert [(p["token"], p["text"]) for p in posted] == [("xoxb-beta", "Nothing waiting for you.")]
+
+    # alpha is mapped but has no Slack credential: the reply is dropped, not posted with the operator's token
+    posted.clear()
+    on_request(_FakeSM(), _event("U_ALPHA", "pending"))
+    assert posted == []
+
+
 # --- budgets per tenant -------------------------------------------------------------------------------------------
 
 

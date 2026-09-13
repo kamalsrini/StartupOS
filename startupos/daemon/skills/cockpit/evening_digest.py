@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
-from daemon import llm
+from daemon import delivery, llm
 from daemon.skills.base import Ctx, Skill, register, system_prompt
 
 NAME = "cockpit.evening_digest"
@@ -99,6 +99,13 @@ def format_tier0(c: dict[str, Any]) -> str:
 
 
 def run(ctx: Ctx) -> str:
+    """Produce the digest, deliver it to the tenant's Slack (Sprint 3b), and still return the text for the web."""
+    text = _produce(ctx)
+    delivery.deliver_text(ctx["conn"], ctx["tenant_id"], "digest", text, ctx.get("now"))
+    return text
+
+
+def _produce(ctx: Ctx) -> str:
     counts = day_counts(ctx)
     summary = format_tier0(counts)
     try:

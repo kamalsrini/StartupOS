@@ -7,12 +7,15 @@ brain_docs decisions.md so the brain learns from what the founder chose.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
 
 from common.models import Approval, Decision
+
+log = logging.getLogger("daemon.approvals")
 
 
 def _row_to_approval(row: dict[str, Any]) -> Approval:
@@ -24,10 +27,27 @@ def get(conn: psycopg.Connection, approval_id: str) -> Approval | None:
     return _row_to_approval(row) if row else None
 
 
+def announce(conn: psycopg.Connection, approval: Approval) -> dict[str, Any] | None:
+    """Post a freshly proposed approval to the tenant's Slack with its Approve/Decline buttons (Sprint 3b, B).
+
+    Best effort in both directions: `deliver_approval` already returns `skipped` rather than raising for a
+    web-only tenant, a tenant with no Slack credential or a Slack outage, and anything it does not catch is
+    caught here. Proposing an approval must never fail because Slack is unhappy — the cockpit still has it.
+    """
+    from daemon import delivery  # local: delivery imports the executors, which import this module's siblings
+
+    try:
+        return delivery.deliver_approval(conn, approval.tenant_id, approval)
+    except Exception as exc:
+        log.warning("approval %s proposed but not delivered: %s", approval.id, type(exc).__name__)
+        return None
+
+
 def propose(conn: psycopg.Connection, approval: Approval) -> Approval:
-    """Insert a pending approval. Idempotent on id: an existing row (any status) is returned unchanged."""
+    """Insert a pending approval, and post it to Slack the first time. Idempotent on id: an existing row (any
+    status) is returned unchanged and is NOT posted again (the deliveries UNIQUE constraint is a second guard)."""
     exec_json = json.dumps(approval.exec.model_dump()) if approval.exec else None
-    conn.execute(
+    inserted = conn.execute(
         """INSERT INTO approvals (id, tenant_id, module, type, target, preview, exec, status, created_by_run, signal_id)
            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, 'pending', %s, %s)
            ON CONFLICT (tenant_id, id) DO NOTHING""",
@@ -45,6 +65,8 @@ def propose(conn: psycopg.Connection, approval: Approval) -> Approval:
     )
     stored = get(conn, approval.id)
     assert stored is not None
+    if inserted.rowcount == 1 and stored.status == "pending":
+        announce(conn, stored)
     return stored
 
 

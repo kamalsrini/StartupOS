@@ -15,8 +15,8 @@ unit:
 functional:    ## needs Postgres at $(TEST_DSN)
 	STARTUPOS_TEST_DSN=$(TEST_DSN) $(PY) -m pytest tests/functional -q -m functional
 
-regression:
-	$(PY) -m pytest tests/regression -q -m regression
+regression:    ## goldens (no DB) + the Sprint 3b end-to-end walk, which needs Postgres at $(TEST_DSN)
+	STARTUPOS_TEST_DSN=$(TEST_DSN) $(PY) -m pytest tests/regression -q -m regression
 
 check: lint unit functional regression
 	@echo "✓ all gates green"

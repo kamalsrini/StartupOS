@@ -128,12 +128,35 @@ def compile_context_pack(tenant_id: str | None = None) -> str:
     return content
 
 
+def deliver_signals(tenant_id: str | None = None) -> list[dict[str, Any]]:
+    """Sprint 3b (Track D): post new `high` signals (and every Chief-of-Staff risk) to the tenant's Slack.
+
+    One message each, at most `delivery.SIGNALS_PER_TICK` per tick with an overflow line on the last; dedupe is
+    the `deliveries` UNIQUE constraint, so a signal is posted once no matter how often the tick runs. Never
+    raises: a Slack failure is recorded on the delivery row and the tick carries on.
+    """
+    tenant_id = tenant_id or settings.tenant_id
+    from daemon import delivery
+
+    try:
+        with get_conn(tenant_id=tenant_id) as conn:
+            out = delivery.deliver_signals(conn, tenant_id)
+    except Exception as exc:  # a DB problem here must not stop the executors that follow
+        log.exception("signal delivery failed for %s: %s", tenant_id, type(exc).__name__)
+        return []
+    sent = [d for d in out if d["status"] == "sent"]
+    if sent:
+        log.info("delivered %d signals to Slack for %s", len(sent), tenant_id)
+    return out
+
+
 def tick_15m(tenant_id: str | None = None) -> None:
     try:
         run_signal_engine(tenant_id)
     except Exception as exc:  # signals failing must not stop skills/executors
         log.exception("signal engine failed: %s", type(exc).__name__)
     run_signal_skills(tenant_id)
+    deliver_signals(tenant_id)
     run_approved(tenant_id)
 
 

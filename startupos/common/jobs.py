@@ -23,6 +23,9 @@ SIGNALS = "signals"
 CONTEXT_PACK = "context_pack"
 CHIEF_OF_STAFF = "chief_of_staff"
 MORNING_PULSE = "morning_pulse"
+# Sprint 3b (Track I): not part of the onboarding chain — `POST /slack/events` enqueues one of these per inbound
+# Slack message so the HTTP handler can answer Slack inside its 3-second budget; daemon/jobs.py runs it.
+SLACK_EVENT = "slack_event"
 TAIL_KINDS: tuple[str, ...] = (SIGNALS, CONTEXT_PACK, CHIEF_OF_STAFF, MORNING_PULSE)
 # Sources with an ingest module today (ingest.runner.SOURCES). Kept here so the API never imports ingest/.
 BACKFILL_SOURCES: tuple[str, ...] = ("linear", "slack", "brex", "vercel")

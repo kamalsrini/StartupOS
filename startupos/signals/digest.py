@@ -100,16 +100,34 @@ def build(conn: psycopg.Connection, tenant_id: str, now: datetime | None = None)
     return render(gather(conn, tenant_id, now or datetime.now(UTC)))
 
 
-def post_to_slack(text: str) -> bool:
-    """Post the digest. Returns False (and does nothing) when the token or channel is missing."""
+def post_to_slack(text: str, *, conn: psycopg.Connection | None = None, tenant_id: str | None = None) -> bool:
+    """Post the digest to Slack. Returns True only when a message actually went out.
+
+    Sprint 3b (Track D): with a connection this goes through `daemon.delivery` — the tenant's own bot token, the
+    tenant's own channel, a `deliveries` row, Block Kit, and dedupe on `digest:<date>`. Without one (the legacy
+    `--post` path and Track A's tests) it keeps the operator-env behaviour and simply reports False when
+    SLACK_BOT_TOKEN / SLACK_DIGEST_CHANNEL are unset. No Slack write ever happens outside the executor.
+    """
+    if conn is not None:
+        from daemon import delivery
+
+        out = delivery.deliver_text(conn, tenant_id or settings.tenant_id, "digest", text)
+        return out["status"] == "sent"
     token = settings.secret("env:SLACK_BOT_TOKEN")
     channel = settings.slack_digest_channel
     if not token or not channel:
         return False
-    from slack_sdk import WebClient
+    from daemon.executors import slack as slack_executor
 
-    WebClient(token=token).chat_postMessage(channel=channel, text=text, mrkdwn=True)
+    fallback_text, blocks = _blocks(text)
+    slack_executor.post_message({"channel": channel, "text": fallback_text, "blocks": blocks}, token=token)
     return True
+
+
+def _blocks(text: str) -> tuple[str, list[dict[str, Any]]]:
+    from daemon import slack_blocks
+
+    return slack_blocks.digest_blocks({"text": text, "date": datetime.now(UTC)})
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -122,10 +140,11 @@ def main(argv: list[str] | None = None) -> int:
     with get_conn(args.dsn) as conn:
         ensure_tenant(conn, settings.tenant_id)
         text = build(conn, settings.tenant_id)
-    print(text)
-    if args.post:
-        posted = post_to_slack(text)
-        print("\n(posted to Slack)" if posted else "\n(not posted: SLACK_BOT_TOKEN or SLACK_DIGEST_CHANNEL missing)")
+        print(text)
+        if args.post:
+            # Through delivery: the install tenant's own Slack credential and channel, recorded in `deliveries`.
+            posted = post_to_slack(text, conn=conn, tenant_id=settings.tenant_id)
+            print("\n(posted to Slack)" if posted else "\n(not posted: no Slack channel or credential for this tenant)")
     return 0
 
 

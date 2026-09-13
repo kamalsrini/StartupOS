@@ -12,6 +12,10 @@
 Job bodies reuse the runtime the scheduler already has: `ingest.runner.run_tenant` for `backfill:<source>`,
 `signals.engine.run`, `brain.pack.compile`, and the `cockpit.chief_of_staff` / `cockpit.morning_pulse` skills (both
 fall back to Tier 0 with no ANTHROPIC key or budget — the first pulse needs no model).
+
+Sprint 3b (Track I) adds one kind outside the onboarding chain: `slack_event`, enqueued by `POST /slack/events` so
+the HTTP handler can acknowledge Slack within 3 seconds; its body answers with the existing gateway and posts the
+reply with the tenant's own bot token.
 """
 
 from __future__ import annotations
@@ -98,11 +102,44 @@ def _run_skill(name: str) -> Handler:
     return handler
 
 
+def run_slack_event(conn: psycopg.Connection, tenant_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """One inbound Slack message (Sprint 3b, Track I): answer it with the existing gateway and post the reply.
+
+    `POST /slack/events` verified the signature, resolved the tenant from `team_id` and returned 200 within Slack's
+    3-second budget; the work happens here. The acting user is resolved from the Slack id through the SECURITY
+    DEFINER `auth_lookup_slack` — a user who is unmapped, or mapped to a different company than the workspace,
+    gets the link hint and nothing is answered on their behalf. The bot token is this tenant's own
+    (`credential_for_source`), never the environment.
+    """
+    from common import secrets as tenant_secrets
+    from daemon.executors import slack as slack_exec
+    from daemon.gateway import slack as gateway
+
+    channel = payload.get("channel")
+    if not channel:
+        raise ValueError("slack_event payload has no channel")
+    text = payload.get("text") or ""
+    slack_user = str(payload.get("slack_user_id") or "")
+    row = conn.execute("SELECT * FROM auth_lookup_slack(%s)", (slack_user,)).fetchone() if slack_user else None
+    if row and row["tenant_id"] == tenant_id:
+        reply = gateway.handle_text(conn, tenant_id, text, user=row["user_id"])
+        acted_as = row["user_id"]
+    else:
+        reply = gateway.link_hint()
+        acted_as = None
+    token = tenant_secrets.credential_for_source(conn, tenant_id, "slack")
+    if not token:
+        raise RuntimeError("no Slack credential for this tenant (the install stored none, or it was revoked)")
+    slack_exec.post_message({"channel": channel, "text": reply, "thread_ts": payload.get("thread_ts")}, token=token)
+    return {"replied": True, "chars": len(reply), "user": acted_as}
+
+
 HANDLERS: dict[str, Handler] = {
     queue.SIGNALS: run_signals,
     queue.CONTEXT_PACK: run_context_pack,
     queue.CHIEF_OF_STAFF: _run_skill("cockpit.chief_of_staff"),
     queue.MORNING_PULSE: _run_skill("cockpit.morning_pulse"),
+    queue.SLACK_EVENT: run_slack_event,
 }
 
 

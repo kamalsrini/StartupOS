@@ -15,6 +15,7 @@ targets, `--fixtures`) in the entry points, never in the multi-tenant paths.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -25,6 +26,36 @@ from common.db import get_conn
 from common.settings import settings
 
 CADENCE_DEFAULTS: dict[str, Any] = {"timezone": "America/Los_Angeles", "pulse_hour": 7, "pulse_channel": "web"}
+
+# `tenants.slack_channel` — the founder's override of the channel chosen at install time. Either a channel NAME
+# (`#` + Slack's own allowed set: lowercase letters, digits, hyphen, underscore and dot, up to 80 characters) or
+# a channel/DM ID as Slack hands them out (C…/G…/D… followed by 8+ uppercase letters or digits). Anything else is
+# refused at the API boundary rather than discovered as a `channel_not_found` at delivery time.
+CHANNEL_NAME_RE = re.compile(r"^#[a-z0-9][a-z0-9._-]{0,79}$")
+CHANNEL_ID_RE = re.compile(r"^[CGD][A-Z0-9]{7,}$")
+
+
+class BadChannel(ValueError):
+    """A `slack_channel` value that is neither `#name` nor a Slack channel id."""
+
+
+def normalize_slack_channel(value: str | None) -> str | None:
+    """`'#ops'`/`'C0123ABCD'` → itself; None/empty → None ("unset": use the install's `default_channel`).
+
+    Raises `BadChannel` for anything else. A name is lower-cased first, the way Slack itself does.
+    """
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    candidate = raw.lower() if raw.startswith("#") else raw
+    if CHANNEL_NAME_RE.match(candidate) or CHANNEL_ID_RE.match(candidate):
+        return candidate
+    raise BadChannel(
+        f"{raw!r} is not a Slack channel: use '#channel-name' or a channel id like 'C0123ABCD' (leave it empty "
+        "to post where the Slack install put StartupOS)"
+    )
 
 
 def service_dsn() -> str:

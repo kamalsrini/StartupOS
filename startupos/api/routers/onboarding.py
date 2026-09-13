@@ -22,6 +22,7 @@ from auth import bootstrap, google, sessions
 from auth.identity import Principal
 from common import jobs as job_queue
 from common import secrets
+from common import tenants as tenant_cfg
 from common.db import get_conn
 from common.ids import run_id
 from common.models import MemoryCard
@@ -33,6 +34,7 @@ SOURCES = ("linear", "slack", "brex", "apollo", "vercel", "posthog", "github", "
 SLICES: tuple[str, ...] = ("identity", "icp", "voice", "pricing", "team")
 DRAFT_MARK = "Draft — confirm or edit."
 COMPILE_SKILL = "onboarding.compile"
+DEFAULT_TIER2_TOKENS = 1_500_000  # the monthly Tier-2 budget a company starts with
 
 # Which two sources we recommend, by what the website suggests (deterministic keyword match; brief §5.1 step 2).
 RECOMMENDATIONS: list[tuple[tuple[str, ...], tuple[str, str]]] = [
@@ -66,10 +68,20 @@ class ConfirmIn(BaseModel):
 
 
 class CadenceIn(BaseModel):
-    timezone: str = "America/Los_Angeles"
-    pulse_hour: int = Field(default=7, ge=0, le=23)
-    channel: Literal["web", "slack", "both"] = "web"
-    tier2_tokens_allowed: int = Field(default=1_500_000, ge=0)
+    """Every field is optional and means "leave this as it is" when omitted.
+
+    It used to mean "reset to the default", which was harmless while the wizard was the only caller and always
+    sent all four. Settings now edits one field at a time (the Slack channel), and silently resetting a founder's
+    timezone, pulse hour or monthly budget because the form did not resend them would be a bug.
+    """
+
+    timezone: str | None = None
+    pulse_hour: int | None = Field(default=None, ge=0, le=23)
+    channel: Literal["web", "slack", "both"] | None = None
+    tier2_tokens_allowed: int | None = Field(default=None, ge=0)
+    # Which Slack channel StartupOS posts in (`#name` or a channel id). Send null/"" to unset it, which means
+    # "post where the founder put StartupOS while installing Slack" (`slack_installations.default_channel`).
+    slack_channel: str | None = None
 
 
 def slugify(name: str) -> str:
@@ -478,24 +490,59 @@ def confirm_card(
 def set_cadence(
     body: CadenceIn, conn: psycopg.Connection = Depends(get_db), tenant_id: str = Depends(get_tenant)
 ) -> dict[str, Any]:
-    if not conn.execute(
-        "UPDATE tenants SET timezone=%s, pulse_hour=%s, pulse_channel=%s WHERE id=%s RETURNING id",
-        (body.timezone, body.pulse_hour, body.channel, tenant_id),
-    ).fetchone():
+    """Persist the cadence, and the Slack channel the founder wants StartupOS to post in.
+
+    The channel is validated here (`#name` or a channel id) so a typo is a 422 the founder can see, not a
+    `channel_not_found` discovered by the daemon at 7am. Unset (null/"") means "use the install's channel".
+    """
+    try:
+        slack_channel = tenant_cfg.normalize_slack_channel(body.slack_channel)
+    except tenant_cfg.BadChannel as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    columns: dict[str, Any] = {}
+    if body.timezone is not None:
+        columns["timezone"] = body.timezone
+    if body.pulse_hour is not None:
+        columns["pulse_hour"] = body.pulse_hour
+    if body.channel is not None:
+        columns["pulse_channel"] = body.channel
+    if "slack_channel" in body.model_fields_set:
+        columns["slack_channel"] = slack_channel
+    if columns:
+        assignments = ", ".join(f"{name} = %s" for name in columns)  # names are literals above, never input
+        row = conn.execute(
+            f"UPDATE tenants SET {assignments} WHERE id = %s RETURNING timezone, pulse_hour, pulse_channel, slack_channel",  # noqa: S608
+            (*columns.values(), tenant_id),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT timezone, pulse_hour, pulse_channel, slack_channel FROM tenants WHERE id = %s", (tenant_id,)
+        ).fetchone()
+    if not row:
         raise HTTPException(status_code=404, detail="tenant not found")
+
     month = date.today().replace(day=1)
+    allowed = body.tier2_tokens_allowed
+    if allowed is None:
+        allowed = scalar(
+            conn, "SELECT max(tier2_tokens_allowed) FROM budgets WHERE tenant_id=%s AND month=%s", (tenant_id, month)
+        )
+    if allowed is None:
+        allowed = DEFAULT_TIER2_TOKENS
     conn.execute(
         """INSERT INTO budgets (tenant_id, month, tier2_tokens_allowed) VALUES (%s, %s, %s)
            ON CONFLICT (tenant_id, month) DO UPDATE SET tier2_tokens_allowed = EXCLUDED.tier2_tokens_allowed""",
-        (tenant_id, month, body.tier2_tokens_allowed),
+        (tenant_id, month, allowed),
     )
     return {
         "tenant_id": tenant_id,
-        "timezone": body.timezone,
-        "pulse_hour": body.pulse_hour,
-        "channel": body.channel,
+        "timezone": row["timezone"],
+        "pulse_hour": row["pulse_hour"],
+        "channel": row["pulse_channel"],
+        "slack_channel": row["slack_channel"],
         "month": month.isoformat(),
-        "tier2_tokens_allowed": body.tier2_tokens_allowed,
+        "tier2_tokens_allowed": allowed,
     }
 
 

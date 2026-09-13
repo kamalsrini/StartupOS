@@ -35,7 +35,8 @@ BEGIN
   FOREACH t IN ARRAY ARRAY[
     'users','sessions','api_tokens','connections','tenant_secrets','brain_docs','issues','projects','bills','vendors',
     'accounts_bank','transactions','cards','deployments','sequences','accounts','messages','documents',
-    'events','signals','context_packs','runs','approvals','budgets','asks','tenant_jobs'
+    'events','signals','context_packs','runs','approvals','budgets','asks','tenant_jobs','deliveries',
+    'slack_installations'
   ] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
@@ -109,5 +110,21 @@ RETURNS SETOF tenant_jobs LANGUAGE sql SECURITY DEFINER VOLATILE AS $$
 $$;
 REVOKE ALL ON FUNCTION tenant_jobs_claim(TEXT[]) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION tenant_jobs_claim(TEXT[]) TO startupos_app;
+-- Sprint 3b (Track I): an inbound Slack request (events, interactivity) arrives with no session and no tenant —
+-- the ONLY thing that identifies the company is the Slack `team_id`. Resolving it is a cross-tenant read that RLS
+-- forbids from application code, so it goes through the same SECURITY DEFINER pattern as the auth lookups and
+-- returns one row with no credential in it (the bot token lives in tenant_secrets, encrypted). A revoked install
+-- is still returned, with `revoked_at` set, so the caller answers "this workspace is not connected" rather than
+-- silently accepting events for a tenant that uninstalled.
+CREATE OR REPLACE FUNCTION slack_lookup_install(p_team_id TEXT)
+RETURNS TABLE (tenant_id TEXT, team_id TEXT, team_name TEXT, bot_user_id TEXT, default_channel TEXT,
+               installed_by TEXT, installed_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ)
+LANGUAGE sql SECURITY DEFINER STABLE AS $$
+  SELECT i.tenant_id, i.team_id, i.team_name, i.bot_user_id, i.default_channel,
+         i.installed_by, i.installed_at, i.revoked_at
+  FROM slack_installations i WHERE i.team_id = p_team_id LIMIT 1
+$$;
+REVOKE ALL ON FUNCTION slack_lookup_install(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION slack_lookup_install(TEXT) TO startupos_app;
 REVOKE ALL ON FUNCTION auth_lookup_google(TEXT, TEXT), auth_lookup_token(TEXT), auth_lookup_session(TEXT), auth_lookup_slack(TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION auth_lookup_google(TEXT, TEXT), auth_lookup_token(TEXT), auth_lookup_session(TEXT), auth_lookup_slack(TEXT) TO startupos_app;

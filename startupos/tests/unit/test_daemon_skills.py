@@ -86,9 +86,24 @@ def test_gateway_parse_command(text, expected):
 
 
 def test_gateway_does_not_start_without_tokens(monkeypatch):
+    monkeypatch.setenv("STARTUPOS_DEV", "1")
     monkeypatch.delenv("SLACK_APP_TOKEN", raising=False)
     monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
     assert gateway.available() is False and gateway.start() is None
+
+
+def test_gateway_does_not_start_outside_dev_mode(monkeypatch):
+    """PE follow-up (Sprint 3b): Socket Mode is dev-only — production Slack arrives over HTTP.
+
+    The listener holds one process-wide operator token, so a production process must never open it: with the
+    tokens present but STARTUPOS_DEV unset, start() logs and returns None instead of connecting.
+    """
+    monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-operator")
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-operator")
+    monkeypatch.delenv("STARTUPOS_DEV", raising=False)
+    assert gateway.available() is True  # the tokens are there; the gateway still stays shut
+    assert gateway.start() is None
+    assert gateway.start("some-tenant") is None
 
 
 # --- with Postgres ------------------------------------------------------------------------------------
