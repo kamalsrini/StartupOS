@@ -6,6 +6,10 @@ Rules (Architecture Brief §2.1, CONTRACTS "Approval"):
   * the row is re-read (FOR UPDATE) immediately before executing; anything not `approved` is refused,
   * only Linear.save_issue and Slack.post_message may run — everything else (Brex especially) is marked
     `failed` with code `not_allowed` and nothing is called,
+  * the executor acts with the approval's tenant's OWN credential (its `connections` row → secret_ref, resolved on
+    the tenant-bound connection: common.secrets.credential_for_source). No credential → `failed`/`executor_error`;
+    there is no fallback to the operator's environment (PE review, Sprint 3a: a second tenant's approved action
+    used to run against the operator's Linear/Slack),
   * the outcome is written back as `executed` {text, url} or `failed` {error, code}, plus a Tier-0 `runs` row.
 """
 
@@ -18,17 +22,21 @@ from typing import Any
 
 import psycopg
 
+from common import secrets
 from daemon import llm
 from daemon.executors import linear, slack
 
 log = logging.getLogger("daemon.executors")
 
-Executor = Callable[[dict[str, Any]], dict[str, Any]]
+# (input, the acting tenant's credential for that server's source) → {text, url}
+Executor = Callable[[dict[str, Any], str | None], dict[str, Any]]
 
 ALLOW_LIST: dict[tuple[str, str], Executor] = {
-    ("Linear", "save_issue"): lambda inp: linear.save_issue(inp),
-    ("Slack", "post_message"): lambda inp: slack.post_message(inp),
+    ("Linear", "save_issue"): lambda inp, key: linear.save_issue(inp, api_key=key),
+    ("Slack", "post_message"): lambda inp, key: slack.post_message(inp, token=key),
 }
+# Which `connections.source` holds the credential an executor server acts with.
+SOURCE_OF_SERVER: dict[str, str] = {"Linear": "linear", "Slack": "slack"}
 
 
 class NotApproved(RuntimeError):
@@ -73,7 +81,8 @@ def run_approved(conn: psycopg.Connection, approval_id: str) -> dict[str, Any]:
         )
 
     try:
-        result = ALLOW_LIST[(server, tool)](exec_spec.get("input") or {})
+        credential = secrets.credential_for_source(conn, tenant, SOURCE_OF_SERVER[server])
+        result = ALLOW_LIST[(server, tool)](exec_spec.get("input") or {}, credential)
     except Exception as exc:  # executor failure → failed row, never crash the daemon loop
         message = f"{type(exc).__name__}: {str(exc)[:500]}"
         llm.record_tier0(conn, tenant, skill, "approval", f"failed: {message}", status="error")

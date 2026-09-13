@@ -27,3 +27,20 @@
 .ok { color: #166534; font-weight: 600; font-size: 11px; }
 .hint { font-size: 11px; color: #78716c; margin-top: 6px; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.chain { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.job { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid #e7e5e4; border-radius: 6px; background: #fff; font-size: 12px; }
+.job.queued { color: #78716c; }
+.job.running { border-color: #2563eb; background: #eff6ff; }
+.job.done { border-color: #bbf7d0; background: #f0fdf4; }
+.job.failed { border-color: #fecaca; background: #fef2f2; }
+.jobDot { width: 10px; height: 10px; border-radius: 50%; background: #d6d3d1; justify-self: center; }
+.job.running .jobDot { background: #2563eb; animation: pulse 1s ease-in-out infinite; }
+.job.done .jobDot { background: #16a34a; }
+.job.failed .jobDot { background: #dc2626; }
+.jobName { font-weight: 600; }
+.jobMeta { font-size: 10px; color: #78716c; font-variant-numeric: tabular-nums; }
+.jobError { grid-column: 2 / 4; font-size: 10px; color: #991b1b; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.credMode { display: flex; gap: 6px; margin-bottom: 6px; }
+.credMode button { font-size: 10px; padding: 2px 8px; border-radius: 10px; border: 1px solid #d6d3d1; background: #fff; cursor: pointer; }
+.credMode button.on { background: #1c1917; color: #fafaf9; border-color: #1c1917; }

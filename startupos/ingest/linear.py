@@ -9,7 +9,6 @@ from typing import Any
 import httpx
 import psycopg
 
-from common.settings import settings
 from ingest import fixtures
 from ingest.base import Upserter, UpsertResult, parse_date, parse_ts
 
@@ -181,22 +180,27 @@ def _paginate(client: httpx.Client, api_key: str, query: str, root: str) -> list
         after = info["endCursor"]
 
 
-def fetch_live(api_key: str | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    key = api_key or settings.secret(KEY_REF)
-    if not key:
-        raise RuntimeError("LINEAR_API_KEY not configured")
+def fetch_live(api_key: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not api_key:
+        raise RuntimeError("linear: no api key")
     with httpx.Client() as client:
-        issues = [normalize_issue_graphql(n) for n in _paginate(client, key, ISSUES_QUERY, "issues")]
-        projects = [normalize_project(n) for n in _paginate(client, key, PROJECTS_QUERY, "projects")]
+        issues = [normalize_issue_graphql(n) for n in _paginate(client, api_key, ISSUES_QUERY, "issues")]
+        projects = [normalize_project(n) for n in _paginate(client, api_key, PROJECTS_QUERY, "projects")]
     return issues, projects
 
 
-def has_credentials() -> bool:
-    return bool(settings.secret(KEY_REF))
-
-
-def sync(conn: psycopg.Connection, tenant_id: str, *, use_fixtures: bool = False) -> dict[str, UpsertResult]:
-    issues, projects = from_fixture() if use_fixtures else fetch_live()
+def sync(
+    conn: psycopg.Connection,
+    tenant_id: str,
+    *,
+    api_key: str | None = None,
+    use_fixtures: bool = False,
+    fixtures_dir: Path | None = None,
+    **_config: Any,
+) -> dict[str, UpsertResult]:
+    """Upsert issues + projects for `tenant_id`. The key is an argument (resolved by the runner per tenant);
+    this module never reads the environment."""
+    issues, projects = from_fixture(fixtures_dir) if use_fixtures else fetch_live(api_key or "")
     return {
         "issues": issues_upserter.upsert(conn, tenant_id, issues),
         "projects": projects_upserter.upsert(conn, tenant_id, projects),

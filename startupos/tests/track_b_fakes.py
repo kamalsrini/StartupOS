@@ -175,7 +175,7 @@ def seed_signal(
     conn.execute(
         """INSERT INTO signals (id, tenant_id, module, rule_id, severity, kind, title, meta, entity, entity_id)
            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'issues', %s)
-           ON CONFLICT (id) DO UPDATE SET last_seen_at = now(), resolved_at = NULL""",
+           ON CONFLICT (tenant_id, id) DO UPDATE SET last_seen_at = now(), resolved_at = NULL""",
         (sid, tenant, module, rule_id, severity, kind, title or f"{entity_id} needs attention", meta, entity_id),
     )
     return sid

@@ -25,17 +25,20 @@ def test_dsn():
     dsn = os.environ.get("STARTUPOS_TEST_DSN", "postgresql://postgres@localhost:5432/startupos_test")
     import psycopg
 
-    base = dsn.rsplit("/", 1)[0] + "/postgres"
+    base, dbname = dsn.rsplit("/", 1)
+    base += "/postgres"
     with psycopg.connect(base, autocommit=True) as c:
-        c.execute("DROP DATABASE IF EXISTS startupos_test")
-        c.execute("CREATE DATABASE startupos_test")
+        # dbname comes from STARTUPOS_TEST_DSN so parallel checkouts can each own a database
+        c.execute(f'DROP DATABASE IF EXISTS "{dbname}"')
+        c.execute(f'CREATE DATABASE "{dbname}"')
     from common.db import apply_schema
 
     apply_schema(dsn)
     return dsn
 
 
-APP_TEST_DSN = "postgresql://startupos_app:startupos_app@localhost:5432/startupos_test"
+_TEST_DB = os.environ.get("STARTUPOS_TEST_DSN", "postgresql://postgres@localhost:5432/startupos_test").rsplit("/", 1)[1]
+APP_TEST_DSN = f"postgresql://startupos_app:startupos_app@localhost:5432/{_TEST_DB}"
 
 
 @pytest.fixture()

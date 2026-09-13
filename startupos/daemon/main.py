@@ -1,6 +1,7 @@
 """Daemon entry point.
 
-python -m daemon.main                     # scheduler (+ Slack gateway when tokens exist), runs until SIGINT
+python -m daemon.main                     # scheduler for every active tenant (+ Slack gateway), runs until SIGINT
+python -m daemon.main --tenant unitone    # pin the scheduler to one tenant (dev); --once/--tick default to TENANT_ID
 python -m daemon.main --once <skill>      # run one skill and exit (ops / smoke tests)
 python -m daemon.main --once ask.answer --question "who paid us in June?"
 python -m daemon.main --tick              # one 15-minute tick (signal skills + approved executors) and exit
@@ -15,6 +16,7 @@ import signal
 import sys
 import time
 
+from common import secrets
 from common.settings import settings
 from daemon import scheduler, skills
 from daemon.gateway import slack as slack_gateway
@@ -28,7 +30,7 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--question", help="question for ask.answer with --once")
     p.add_argument("--tick", action="store_true", help="run one 15-minute tick and exit")
     p.add_argument("--list", action="store_true", help="list skills")
-    p.add_argument("--tenant", default=settings.tenant_id)
+    p.add_argument("--tenant", default=None, help="pin to one tenant (dev/CLI); default: every active tenant")
     p.add_argument("--no-slack", action="store_true", help="do not start the Slack gateway")
     return p.parse_args(argv)
 
@@ -42,9 +44,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{s.name:28s} T{s.tier} {s.trigger:9s} {s.module:10s} {s.description}")
         return 0
 
+    cli_tenant = args.tenant or settings.tenant_id  # --once / --tick are operator commands: one tenant, dev default
+
     if args.once:
         extra = {"question": args.question} if args.question else {}
-        out = scheduler.run_skill(args.once, args.tenant, **extra)
+        out = scheduler.run_skill(args.once, cli_tenant, **extra)
         if isinstance(out, list):
             for a in out:
                 print(f"{a.status:9s} {a.id} · {a.type} · {a.target}")
@@ -54,11 +58,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.tick:
-        scheduler.tick_15m(args.tenant)
+        scheduler.tick_15m(cli_tenant)
         return 0
 
-    sched = scheduler.build_scheduler(args.tenant)
-    gateway = None if args.no_slack else slack_gateway.start(args.tenant)
+    secrets.check_master_key(log)  # malformed → RuntimeError before any job runs; unset → one warning
+    sched = scheduler.build_scheduler(args.tenant)  # None → every active tenant + refresh_tenants every 5 min
+    gateway = None if args.no_slack else slack_gateway.start()
     stop = {"flag": False}
 
     def _stop(*_: object) -> None:
@@ -77,8 +82,8 @@ def main(argv: list[str] | None = None) -> int:
 
     sched.start()
     log.info(
-        "scheduler started for tenant %s (%d jobs); slack gateway %s",
-        args.tenant,
+        "scheduler started for tenants %s (%d jobs); slack gateway %s",
+        sorted(scheduler.scheduled_tenants(sched)) or (args.tenant and [args.tenant]) or "[]",
         len(sched.get_jobs()),
         "on" if gateway else "off",
     )

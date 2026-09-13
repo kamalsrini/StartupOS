@@ -4,18 +4,18 @@ Accepts the MCP-style save_issue input:
   {id, assignee, dueDate, priority, blockedBy, duplicateOf, state, project, team, title, description, addLabels}
 and maps names → ids (assignee by display name via a users lookup, state/project/team/labels by name).
 
-Credentials come only from `settings.secret("env:LINEAR_API_KEY")`. Tests inject `_graphql`.
+The credential is an argument (`api_key`), resolved per tenant by daemon/executors from the tenant's `connections`
+row (common.secrets.credential_for_source); this module never reads the environment. Tests inject `_graphql`.
 """
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Callable
 from typing import Any
 
 import httpx
-
-from common.settings import settings
 
 LINEAR_URL = "https://api.linear.app/graphql"
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
@@ -27,14 +27,13 @@ class LinearError(RuntimeError):
     pass
 
 
-def _default_graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
-    key = settings.secret("env:LINEAR_API_KEY")
-    if not key:
-        raise LinearError("LINEAR_API_KEY is not configured")
+def _default_graphql(query: str, variables: dict[str, Any], api_key: str | None = None) -> dict[str, Any]:
+    if not api_key:
+        raise LinearError("no Linear credential for this tenant (connect Linear in onboarding)")
     resp = httpx.post(
         LINEAR_URL,
         json={"query": query, "variables": variables},
-        headers={"Authorization": key, "Content-Type": "application/json"},
+        headers={"Authorization": api_key, "Content-Type": "application/json"},
         timeout=30.0,
     )
     resp.raise_for_status()
@@ -51,6 +50,16 @@ _graphql: GraphQL = _default_graphql
 
 def _gql(query: str, variables: dict[str, Any] | None = None, gql: GraphQL | None = None) -> dict[str, Any]:
     return (gql or _graphql)(query, variables or {})
+
+
+def _transport(gql: GraphQL | None, api_key: str | None) -> GraphQL:
+    """The transport for one save_issue: an explicit `gql`, else an injected `_graphql` (tests), else the real
+    one bound to this tenant's key."""
+    if gql is not None:
+        return gql
+    if _graphql is _default_graphql:
+        return functools.partial(_default_graphql, api_key=api_key)
+    return _graphql
 
 
 # --- lookups ---------------------------------------------------------------------------------------
@@ -184,8 +193,11 @@ def _relate(issue_uuid: str, other_ref: str, kind: str, gql: GraphQL | None) -> 
     )
 
 
-def save_issue(inp: dict[str, Any], *, gql: GraphQL | None = None) -> dict[str, Any]:
-    """Update (when `id` given) or create an issue. Returns {text, url} for approvals.result."""
+def save_issue(inp: dict[str, Any], *, gql: GraphQL | None = None, api_key: str | None = None) -> dict[str, Any]:
+    """Update (when `id` given) or create an issue. Returns {text, url} for approvals.result.
+
+    `api_key` is the acting tenant's Linear key (None → LinearError from the real transport, never an env fallback)."""
+    gql = _transport(gql, api_key)
     if inp.get("id"):
         issue = resolve_issue(str(inp["id"]), gql)
         team_id = (issue.get("team") or {}).get("id")

@@ -167,3 +167,106 @@ def test_executor_failure_marks_failed_not_crash(conn, monkeypatch):
     assert (
         row["status"] == "failed" and row["result"]["code"] == "executor_error" and "UNI-404" in row["result"]["error"]
     )
+
+
+# --- per-tenant credentials (PE review, Sprint 3a) ----------------------------------------------------
+
+
+def test_real_transports_never_read_the_environment(monkeypatch):
+    """Without a per-tenant key the real Linear/Slack transports refuse — no fallback to LINEAR_API_KEY/SLACK_BOT_TOKEN."""
+    monkeypatch.setenv("LINEAR_API_KEY", "lin_api_OPERATOR")
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-operator")
+    calls: list[dict] = []
+
+    def never(*_a, **_kw):
+        raise AssertionError("the wire must not be touched without a key")
+
+    monkeypatch.setattr(linear.httpx, "post", never)
+    with pytest.raises(linear.LinearError, match="no Linear credential"):
+        linear.save_issue({"id": "UNI-1", "assignee": "Alexey"})
+    assert calls == []
+    with pytest.raises(slack.SlackError, match="no Slack credential"):
+        slack.post_message({"channel": "C1", "text": "hi"})
+    # an explicit key is what reaches the wire
+    monkeypatch.setattr(linear.httpx, "post", lambda url, **kw: calls.append(kw) or _Resp())
+    with pytest.raises(linear.LinearError, match="issue not found"):
+        linear.save_issue({"id": "UNI-1", "assignee": "Alexey"}, api_key="lin_api_TENANT_B")
+    assert calls and calls[0]["headers"]["Authorization"] == "lin_api_TENANT_B"
+
+
+class _Resp:
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict:
+        return {"data": {"issue": None}}
+
+
+@pytest.mark.functional
+def test_executor_acts_with_the_approvals_tenants_own_credential(test_dsn, conn, monkeypatch):
+    """Tenant B's approved Linear action runs with B's stored key; the operator's env key is never used."""
+    import base64
+    import os
+
+    from common import secrets
+    from common.db import get_conn
+    from common.settings import settings
+
+    monkeypatch.setenv("STARTUPOS_MASTER_KEY", base64.urlsafe_b64encode(os.urandom(32)).decode())
+    monkeypatch.setenv("LINEAR_API_KEY", "lin_api_OPERATOR")
+    tb = "exec-tenant-b"
+    assert tb != settings.tenant_id
+    conn.execute("INSERT INTO tenants (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING", (tb, tb))
+    conn.execute("DELETE FROM approvals WHERE tenant_id = %s", (tb,))
+    conn.execute("DELETE FROM connections WHERE tenant_id = %s", (tb,))
+    conn.commit()
+    keys_used: list[str | None] = []
+
+    def transport(query, variables, api_key=None):  # the real transport's contract: no key → refuse
+        keys_used.append(api_key)
+        if not api_key:
+            raise linear.LinearError("no Linear credential for this tenant")
+        return FakeLinearGraphQL()(query, variables)
+
+    monkeypatch.setattr(linear, "_default_graphql", transport)
+    monkeypatch.setattr(linear, "_graphql", transport)
+    with get_conn(test_dsn, tenant_id=tb) as cb:
+        approvals.propose(
+            cb,
+            Approval(
+                id="b-1",
+                tenant_id=tb,
+                module="build",
+                type="t",
+                target="x",
+                preview="p",
+                exec=Exec(server="Linear", tool="save_issue", input={"id": "ACM-1", "assignee": "Alexey"}),
+            ),
+        )
+        approvals.decide(cb, "b-1", Decision(decision="approve"))
+        # no connection row for B → failed, and the operator's env key was never offered to the transport
+        row = executors.run_approved(cb, "b-1")
+        assert row["status"] == "failed" and row["result"]["code"] == "executor_error"
+        assert "lin_api" not in json.dumps(row["result"])
+        assert keys_used == [] or all(k is None for k in keys_used)
+        # a pre-3a row pointing B at the operator's env ref is refused, not honoured
+        cb.execute(
+            "INSERT INTO connections (id, tenant_id, source, secret_ref, status) VALUES (%s, %s, 'linear', 'env:LINEAR_API_KEY', 'connected')",
+            (f"{tb}:linear", tb),
+        )
+        cb.execute("UPDATE approvals SET status = 'approved' WHERE id = 'b-1'")
+        row = executors.run_approved(cb, "b-1")
+        assert row["status"] == "failed" and "SecretRefForbidden" in row["result"]["error"]
+        assert "lin_api" not in json.dumps(row["result"]) and "lin_api_OPERATOR" not in keys_used
+        # B's own key (what POST /onboarding/connections {credential} stores) is what the executor acts with
+        secrets.put(cb, tb, "linear_api_key", "lin_api_TENANT_B")
+        cb.execute("UPDATE connections SET secret_ref = 'kv:linear_api_key' WHERE tenant_id = %s", (tb,))
+        cb.execute("UPDATE approvals SET status = 'approved' WHERE id = 'b-1'")
+        keys_used.clear()
+        row = executors.run_approved(cb, "b-1")
+        assert row["status"] == "executed", row["result"]
+        assert keys_used and set(keys_used) == {"lin_api_TENANT_B"}
+    conn.execute("DELETE FROM approvals WHERE tenant_id = %s", (tb,))
+    conn.execute("DELETE FROM connections WHERE tenant_id = %s", (tb,))
+    conn.execute("DELETE FROM tenant_secrets WHERE tenant_id = %s", (tb,))
+    conn.commit()

@@ -33,9 +33,9 @@ DO $$
 DECLARE t TEXT;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
-    'users','sessions','api_tokens','connections','brain_docs','issues','projects','bills','vendors',
+    'users','sessions','api_tokens','connections','tenant_secrets','brain_docs','issues','projects','bills','vendors',
     'accounts_bank','transactions','cards','deployments','sequences','accounts','messages','documents',
-    'events','signals','context_packs','runs','approvals','budgets','asks'
+    'events','signals','context_packs','runs','approvals','budgets','asks','tenant_jobs'
   ] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
@@ -67,5 +67,47 @@ CREATE OR REPLACE FUNCTION auth_lookup_slack(p_slack_user_id TEXT)
 RETURNS TABLE (tenant_id TEXT, user_id TEXT) LANGUAGE sql SECURITY DEFINER STABLE AS $$
   SELECT u.tenant_id, u.id FROM users u WHERE u.slack_user_id = p_slack_user_id AND u.status = 'active' LIMIT 1
 $$;
+-- Sprint 3a (Track T): the daemon and the ingest loop run as startupos_app and must enumerate tenants to
+-- schedule per-tenant jobs. Same pattern as the auth lookups: a SECURITY DEFINER function returning only the
+-- cadence columns, never a cross-tenant scan from application code.
+CREATE OR REPLACE FUNCTION tenants_active()
+RETURNS TABLE (id TEXT, name TEXT, timezone TEXT, tier TEXT, pulse_hour SMALLINT, pulse_channel TEXT, status TEXT)
+LANGUAGE sql SECURITY DEFINER STABLE AS $$
+  SELECT t.id, t.name, t.timezone, t.tier, t.pulse_hour, t.pulse_channel, t.status
+  FROM tenants t WHERE t.status = 'active' ORDER BY t.created_at, t.id
+$$;
+REVOKE ALL ON FUNCTION tenants_active() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION tenants_active() TO startupos_app;
+-- Sprint 3a (Track O): the job service (daemon/jobs.py) runs as startupos_app and must claim the next queued job
+-- across tenants — a cross-tenant write the RLS policy forbids. Same pattern again: a SECURITY DEFINER claim that
+-- returns exactly one row (or none) and enforces the queue rules in one statement:
+--   * oldest queued job first (created_at, id), FOR UPDATE SKIP LOCKED so several daemons never claim the same row;
+--   * per-tenant ordering: a job is claimable only when no earlier job of its tenant is still queued or running
+--     (done/failed jobs never block — the chain continues past a failed backfill);
+--   * `run_after` (retry backoff) must have passed; a job left 'running' for over 30 minutes (a daemon died
+--     mid-job) is claimable again, so nothing stays stuck — its attempts still count towards the limit of 3;
+--   * p_tenants narrows the claim to some tenants (the pinned dev scheduler); NULL = every tenant.
+-- The claimed job is then executed and finished (done/failed/re-queued) on a connection bound to its tenant.
+CREATE OR REPLACE FUNCTION tenant_jobs_claim(p_tenants TEXT[] DEFAULT NULL)
+RETURNS SETOF tenant_jobs LANGUAGE sql SECURITY DEFINER VOLATILE AS $$
+  UPDATE tenant_jobs j
+     SET status = 'running', attempts = j.attempts + 1, started_at = now(), finished_at = NULL
+   WHERE j.id = (
+     SELECT c.id FROM tenant_jobs c
+      WHERE ((c.status = 'queued' AND c.run_after <= now())
+             OR (c.status = 'running' AND c.started_at < now() - interval '30 minutes'))
+        AND (p_tenants IS NULL OR c.tenant_id = ANY(p_tenants))
+        AND NOT EXISTS (
+          SELECT 1 FROM tenant_jobs e
+           WHERE e.tenant_id = c.tenant_id
+             AND (e.status = 'queued' OR (e.status = 'running' AND e.started_at >= now() - interval '30 minutes'))
+             AND (e.created_at, e.id) < (c.created_at, c.id))
+      ORDER BY c.created_at, c.id
+      LIMIT 1
+      FOR UPDATE OF c SKIP LOCKED)
+  RETURNING j.*
+$$;
+REVOKE ALL ON FUNCTION tenant_jobs_claim(TEXT[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION tenant_jobs_claim(TEXT[]) TO startupos_app;
 REVOKE ALL ON FUNCTION auth_lookup_google(TEXT, TEXT), auth_lookup_token(TEXT), auth_lookup_session(TEXT), auth_lookup_slack(TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION auth_lookup_google(TEXT, TEXT), auth_lookup_token(TEXT), auth_lookup_session(TEXT), auth_lookup_slack(TEXT) TO startupos_app;

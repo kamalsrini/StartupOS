@@ -32,6 +32,7 @@ TABLES = (
     "documents",
     "brain_docs",
     "connections",
+    "tenant_secrets",
     "users",
 )
 

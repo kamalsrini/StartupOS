@@ -1,7 +1,7 @@
-.PHONY: db lint unit functional regression check dev-api dev-daemon ingest signals pack digest
+.PHONY: db lint unit functional regression check dev-api dev-daemon ingest ingest-all signals pack digest
 
 PY ?= PYTHONPATH=. python3
-TEST_DSN ?= postgresql://postgres@localhost:5432/startupos_test
+TEST_DSN ?= $(or $(STARTUPOS_TEST_DSN),postgresql://postgres@localhost:5432/startupos_test)
 
 db:            ## apply schema to DATABASE_URL
 	$(PY) scripts/apply_schema.py
@@ -21,7 +21,10 @@ regression:
 check: lint unit functional regression
 	@echo "✓ all gates green"
 
-ingest:        ## one ingest pass (live if keys present, else fixtures)
+ingest:        ## one dev/CLI pass for TENANT_ID (live if env keys present, else skipped; --fixtures for sample data)
+	$(PY) -m ingest.runner --tenant
+
+ingest-all:    ## one pass over every active tenant's connections (what the ingest service loops on)
 	$(PY) -m ingest.runner
 
 signals:

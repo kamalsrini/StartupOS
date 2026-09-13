@@ -9,6 +9,7 @@ requires a principal (Bearer token or sos_session cookie); the tenant is always 
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -20,6 +21,7 @@ from api.deps import api_dsn, optional_principal
 from api.routers import approvals, asks, auth, cockpit, finance, modules, onboarding
 from auth import config
 from auth.identity import Principal
+from common import secrets
 from common.db import get_conn
 
 
@@ -31,6 +33,7 @@ def check_startup_config() -> None:
             "or export STARTUPOS_DEV=1 for local development only."
         )
     config.session_secret()  # logs the dev warning once
+    secrets.check_master_key(logging.getLogger("api"))  # malformed → RuntimeError; unset → one warning (503 on writes)
 
 
 @asynccontextmanager

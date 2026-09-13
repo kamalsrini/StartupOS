@@ -1,6 +1,7 @@
 """Slack executor: `Slack.post_message` → chat.postMessage via slack_sdk.
 
-Input: {channel, text, thread_ts?}. Token only via settings.secret("env:SLACK_BOT_TOKEN"). Tests inject `_client_factory`.
+Input: {channel, text, thread_ts?}. The bot token is an argument (`token`), resolved per tenant by daemon/executors
+from the tenant's `connections` row; this module never reads the environment. Tests inject `_client_factory`.
 """
 
 from __future__ import annotations
@@ -8,23 +9,27 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from common.settings import settings
-
 
 class SlackError(RuntimeError):
     pass
 
 
-def _default_client_factory() -> Any:
-    token = settings.secret("env:SLACK_BOT_TOKEN")
+def _default_client_factory(token: str | None = None) -> Any:
     if not token:
-        raise SlackError("SLACK_BOT_TOKEN is not configured")
+        raise SlackError("no Slack credential for this tenant (connect Slack in onboarding)")
     from slack_sdk import WebClient
 
     return WebClient(token=token)
 
 
-_client_factory: Callable[[], Any] = _default_client_factory
+_client_factory: Callable[..., Any] = _default_client_factory
+
+
+def _client(token: str | None) -> Any:
+    """An injected `_client_factory` (tests) as is; the real one bound to this tenant's token."""
+    if _client_factory is _default_client_factory:
+        return _default_client_factory(token)
+    return _client_factory()
 
 
 def _permalink(client: Any, channel: str, ts: str) -> str | None:
@@ -40,12 +45,12 @@ def _permalink(client: Any, channel: str, ts: str) -> str | None:
     return None
 
 
-def post_message(inp: dict[str, Any], *, client: Any | None = None) -> dict[str, Any]:
+def post_message(inp: dict[str, Any], *, client: Any | None = None, token: str | None = None) -> dict[str, Any]:
     channel = inp.get("channel")
     text = inp.get("text")
     if not channel or not text:
         raise SlackError("post_message requires `channel` and `text`")
-    client = client or _client_factory()
+    client = client or _client(token)
     kwargs: dict[str, Any] = {"channel": channel, "text": text}
     if inp.get("thread_ts"):
         kwargs["thread_ts"] = inp["thread_ts"]

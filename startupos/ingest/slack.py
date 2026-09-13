@@ -1,4 +1,4 @@
-"""Slack ingest: conversations.history for settings.slack_channels → `messages` (source='slack')."""
+"""Slack ingest: conversations.history for the connection's `channels` → `messages` (source='slack')."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from typing import Any
 
 import psycopg
 
-from common.settings import settings
 from ingest import fixtures
 from ingest.base import Upserter, UpsertResult, parse_ts
 
@@ -56,15 +55,16 @@ def from_fixture(base: Path | None = None) -> list[dict[str, Any]]:
     return out
 
 
-def fetch_live(token: str | None = None, channels: tuple[str, ...] | None = None, limit: int = 500) -> list[dict]:
-    tok = token or settings.secret(KEY_REF)
-    if not tok:
-        raise RuntimeError("SLACK_BOT_TOKEN not configured")
+def fetch_live(token: str, channels: tuple[str, ...] | list[str] | None = None, limit: int = 500) -> list[dict]:
+    if not token:
+        raise RuntimeError("slack: no bot token")
+    if not channels:
+        raise RuntimeError("slack: no channels configured (connections.config.channels)")
     from slack_sdk import WebClient
 
-    client = WebClient(token=tok)
+    client = WebClient(token=token)
     out: list[dict[str, Any]] = []
-    for channel in channels or settings.slack_channels:
+    for channel in channels:
         cursor = None
         fetched = 0
         while True:
@@ -80,10 +80,16 @@ def fetch_live(token: str | None = None, channels: tuple[str, ...] | None = None
     return out
 
 
-def has_credentials() -> bool:
-    return bool(settings.secret(KEY_REF)) and bool(settings.slack_channels)
-
-
-def sync(conn: psycopg.Connection, tenant_id: str, *, use_fixtures: bool = False) -> dict[str, UpsertResult]:
-    rows = from_fixture() if use_fixtures else fetch_live()
+def sync(
+    conn: psycopg.Connection,
+    tenant_id: str,
+    *,
+    api_key: str | None = None,
+    use_fixtures: bool = False,
+    fixtures_dir: Path | None = None,
+    channels: tuple[str, ...] | list[str] | None = None,
+    **_config: Any,
+) -> dict[str, UpsertResult]:
+    """Upsert messages for `tenant_id`. Token and channels come from the runner (connection row), never from env."""
+    rows = from_fixture(fixtures_dir) if use_fixtures else fetch_live(api_key or "", channels)
     return {"messages": messages_upserter.upsert(conn, tenant_id, rows)}

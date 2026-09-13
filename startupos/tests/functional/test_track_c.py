@@ -15,10 +15,12 @@ def client(conn, auth_env):
     # Only touch the tenant this flow creates; other tracks share the scratch DB.
     for t in (
         "approvals",
+        "tenant_jobs",
         "runs",
         "budgets",
         "brain_docs",
         "connections",
+        "tenant_secrets",
         "sessions",
         "users",
         "issues",
@@ -32,6 +34,9 @@ def client(conn, auth_env):
 
     with TestClient(app) as c:
         yield c
+    # compile queues the first-pulse chain (Track O); leave no queued jobs behind for other tests' job service
+    conn.execute("DELETE FROM tenant_jobs WHERE tenant_id = 'acme-dev-tools'")
+    conn.commit()
 
 
 def test_onboarding_flow(client, conn):
@@ -88,15 +93,24 @@ def test_onboarding_flow(client, conn):
         client.post("/onboarding/connections", params=q, json={"source": "fax", "secret_ref": "env:X"}).status_code
         == 422
     )
+    # env: refs are the operator's (install tenant's) own keys — a self-serve tenant may not point at them
     r = client.post(
         "/onboarding/connections",
         params=q,
         json={"source": "linear", "secret_ref": "env:LINEAR_API_KEY", "config": {"team": "ACM"}},
     )
+    assert r.status_code == 403, r.text
+    assert conn.execute("SELECT count(*) AS n FROM connections WHERE tenant_id=%s", (tid,)).fetchone()["n"] == 0
+    r = client.post(
+        "/onboarding/connections",
+        params=q,
+        json={"source": "linear", "secret_ref": "kv:linear_api_key", "config": {"team": "ACM"}},
+    )
     assert (
         r.status_code == 200
-        and r.json()["secret_ref"] == "env:LINEAR_API_KEY"
+        and r.json()["secret_ref"] == "kv:linear_api_key"
         and r.json()["config"] == {"team": "ACM"}
+        and r.json()["has_credential"] is False
     )
     assert client.get("/onboarding/status", params=q).json()["steps"]["connections"] is False
     r = client.post(

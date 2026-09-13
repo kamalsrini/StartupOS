@@ -104,7 +104,7 @@ def upsert_signals(
                                     suggested_skill, href, first_seen_at, last_seen_at, resolved_at)
                VALUES (%(id)s, %(tenant_id)s, %(module)s, %(rule_id)s, %(severity)s, %(kind)s, %(title)s, %(meta)s,
                        %(entity)s, %(entity_id)s, %(suggested_skill)s, %(href)s, %(now)s, %(now)s, NULL)
-               ON CONFLICT (id) DO UPDATE SET
+               ON CONFLICT (tenant_id, id) DO UPDATE SET
                  module = EXCLUDED.module, severity = EXCLUDED.severity, kind = EXCLUDED.kind,
                  title = EXCLUDED.title, meta = EXCLUDED.meta, entity = EXCLUDED.entity,
                  entity_id = EXCLUDED.entity_id, suggested_skill = EXCLUDED.suggested_skill, href = EXCLUDED.href,

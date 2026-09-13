@@ -31,6 +31,10 @@ def get_conn(dsn: str | None = None, tenant_id: str | None = None) -> Iterator[p
     conn = psycopg.connect(dsn or settings.app_dsn or settings.database_url, row_factory=dict_row)
     try:
         set_tenant(conn, tenant_id if tenant_id is not None else settings.tenant_id)
+        # Commit the binding on its own: psycopg opens a transaction on the first statement, and a later
+        # rollback() (ingest records a failure that way) would otherwise undo set_config and leave the
+        # connection unbound — every following query would then be refused by RLS.
+        conn.commit()
         yield conn
         conn.commit()
     except Exception:

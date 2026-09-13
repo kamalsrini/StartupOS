@@ -47,3 +47,25 @@ def test_auth_lookup_functions_work_without_tenant(conn):
         assert none.execute("SELECT count(*) AS n FROM users").fetchone()["n"] == 0
     conn.execute("DELETE FROM users WHERE id = 'u_rls'")
     conn.commit()
+
+
+def test_every_tenant_table_has_forced_rls(conn):
+    """Any table with a tenant_id column must be RLS-enabled + forced with the tenant_isolation policy."""
+    tenant_tables = {
+        r["table_name"]
+        for r in conn.execute(
+            "SELECT table_name FROM information_schema.columns WHERE table_schema='public' AND column_name='tenant_id'"
+        )
+    }
+    assert "tenant_secrets" in tenant_tables
+    forced = {
+        r["relname"]
+        for r in conn.execute(
+            "SELECT relname FROM pg_class WHERE relnamespace='public'::regnamespace AND relrowsecurity AND relforcerowsecurity"
+        )
+    }
+    policies = {
+        r["tablename"] for r in conn.execute("SELECT tablename FROM pg_policies WHERE policyname='tenant_isolation'")
+    }
+    assert tenant_tables - forced == set(), f"tenant tables without forced RLS: {sorted(tenant_tables - forced)}"
+    assert tenant_tables - policies == set(), f"tenant tables without policy: {sorted(tenant_tables - policies)}"

@@ -30,7 +30,7 @@ def propose(conn: psycopg.Connection, approval: Approval) -> Approval:
     conn.execute(
         """INSERT INTO approvals (id, tenant_id, module, type, target, preview, exec, status, created_by_run, signal_id)
            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, 'pending', %s, %s)
-           ON CONFLICT (id) DO NOTHING""",
+           ON CONFLICT (tenant_id, id) DO NOTHING""",
         (
             approval.id,
             approval.tenant_id,

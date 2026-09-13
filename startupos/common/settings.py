@@ -18,6 +18,10 @@ def _env(name: str, default: str | None = None) -> str | None:
     return v if v not in (None, "") else default
 
 
+class SecretRefForbidden(ValueError):
+    """An `env:` secret_ref was resolved for a tenant other than the install tenant. Never carries a value."""
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str = field(
@@ -47,12 +51,37 @@ class Settings:
     vercel_team_id: str | None = field(default_factory=lambda: _env("VERCEL_TEAM_ID"))
 
     # Secrets: resolved on demand so they never sit on the dataclass repr.
-    def secret(self, ref: str) -> str | None:
-        """Resolve a secret_ref like 'env:LINEAR_API_KEY'. Key Vault refs ('kv:...') are a v2 concern."""
+    def master_key(self) -> str | None:
+        """STARTUPOS_MASTER_KEY — 32 random bytes, urlsafe base64, wrapping every per-tenant secret (common/secrets.py).
+
+        Generate with:  python -c "import os,base64;print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
+        Read at call time (not cached on the dataclass) so it never appears in a repr and so tests can set it.
+        """
+        return _env("STARTUPOS_MASTER_KEY")
+
+    def secret(self, ref: str, *, conn=None, tenant_id: str | None = None) -> str | None:
+        """Resolve a secret_ref.
+
+        - 'env:NAME'  → the process environment (operator-managed keys; unchanged since v1). These are the
+                        install tenant's (TENANT_ID) own credentials: when `tenant_id` names any other tenant the
+                        ref is refused (SecretRefForbidden) — a self-serve tenant must never ingest or act with
+                        the operator's keys (PE review, Sprint 3a).
+        - 'kv:NAME'   → the caller's tenant row in `tenant_secrets`, decrypted by common/secrets.py. Requires a
+                        connection and a tenant_id; missing either is a programming error (ValueError), never a
+                        silent fallback to another tenant or to the environment.
+        """
         scheme, _, name = ref.partition(":")
         if scheme == "env":
+            if tenant_id and tenant_id != self.tenant_id:
+                raise SecretRefForbidden(f"env: secret refs belong to the install tenant, not {tenant_id!r}")
             return _env(name)
-        raise NotImplementedError(f"secret scheme not supported in v1: {scheme}")
+        if scheme == "kv":
+            if conn is None or not tenant_id:
+                raise ValueError("kv: secret refs need conn= and tenant_id= (per-tenant secrets are tenant-bound)")
+            from common import secrets  # local import: secrets.py reads the master key from this module
+
+            return secrets.get(conn, tenant_id, name)
+        raise NotImplementedError(f"secret scheme not supported: {scheme}")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"Settings(tenant_id={self.tenant_id!r}, database_url=<redacted>)"

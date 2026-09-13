@@ -108,7 +108,7 @@ def test_scheduler_tick_runs_signal_skills_and_executes_approved(conn, monkeypat
     from contextlib import contextmanager
 
     @contextmanager
-    def test_conn():
+    def test_conn(*_a, **_k):  # scheduler jobs open get_conn(tenant_id=...) — tenant-bound (Track T)
         yield conn
 
     monkeypatch.setattr(scheduler, "get_conn", test_conn)
@@ -161,19 +161,27 @@ def test_gateway_approve_executes_immediately(conn, monkeypatch):
 
 
 def test_scheduler_builds_jobs_in_tenant_timezone(monkeypatch):
-    monkeypatch.setattr(scheduler, "tenant_timezone", lambda t: "America/Los_Angeles")
-    sched = scheduler.build_scheduler(TENANT)
+    monkeypatch.setattr(
+        scheduler,
+        "tenant_cadence",
+        lambda t: {"timezone": "America/Los_Angeles", "pulse_hour": 7, "pulse_channel": "web"},
+    )
+    sched = scheduler.build_scheduler(TENANT)  # pinned to one tenant (dev path): no refresh_tenants job
     assert sched is not None
     jobs = {j.id: str(j.trigger) for j in sched.get_jobs()}
     assert set(jobs) == {
-        "chief_of_staff",
-        "morning_pulse",
-        "evening_digest",
-        "context_pack",
-        "tick_15m",
-        "service_asks",
-        "weekly_review",
-    }
+        f"{j}:{TENANT}"
+        for j in (
+            "chief_of_staff",
+            "morning_pulse",
+            "evening_digest",
+            "context_pack",
+            "tick_15m",
+            "service_asks",
+            "weekly_review",
+        )
+    } | {scheduler.SERVICE_JOBS_ID}  # Track O: one process-wide onboarding job service, even when pinned
+    jobs = {k.split(":")[0]: v for k, v in jobs.items()}
     assert "hour='7'" in jobs["morning_pulse"] and "hour='18'" in jobs["evening_digest"]
     assert "hour='6'" in jobs["chief_of_staff"] and "minute='30'" in jobs["chief_of_staff"]
     assert "minute='*/15'" in jobs["tick_15m"] and "day_of_week='fri'" in jobs["weekly_review"]

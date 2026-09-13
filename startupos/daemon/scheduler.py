@@ -1,10 +1,21 @@
 """Scheduler: the daemon runs a skill only when a schedule ticks, a signal fires, or a person asks.
 
-Jobs (tenant-local time from tenants.timezone):
+Jobs (tenant-local time from tenants.timezone), one per (job, tenant) with id "<job_id>:<tenant_id>":
   06:30 cockpit.chief_of_staff (pulse_hour - 1, :30) · 07:00 cockpit.morning_pulse · 18:00 cockpit.evening_digest · every 15 min signal skills + approved executors ·
   Friday 16:00 weekly review placeholder.
 
-APScheduler when installed; otherwise a plain minute loop with the same job table.
+Sprint 3a (Track T): `build_scheduler()` registers the job table for every `active_tenants()` row, plus one
+process-wide `refresh_tenants` job (every 5 minutes) that adds jobs for tenants that appeared and removes jobs
+for tenants that are no longer active — sign-up needs no daemon restart. Every job body opens its own
+tenant-bound connection (`get_conn(tenant_id=…)`), so RLS scopes every query to that tenant.
+
+Sprint 3a (Track O): one more process-wide job, `service_jobs` (every 15 s), drains the onboarding chain in
+`tenant_jobs` for every tenant (daemon/jobs.py) — it claims across tenants through the SECURITY DEFINER
+`tenant_jobs_claim()` and runs each job on that tenant's own connection. A pinned scheduler narrows it to the
+pinned tenants.
+
+APScheduler when installed; otherwise a plain minute loop over the same job table and the same tenant list.
+`settings.tenant_id` is only the dev/CLI default (`daemon.main --once/--tick`).
 """
 
 from __future__ import annotations
@@ -20,27 +31,34 @@ from psycopg.types.json import Jsonb
 
 from common.db import ensure_tenant, get_conn
 from common.settings import settings
-from daemon import executors, skills
+from common.tenants import CADENCE_DEFAULTS, active_tenants
+from daemon import executors, jobs, skills
+from daemon.jobs import SERVICE_JOBS_SECONDS
 from daemon.skills import build_ctx
 
 log = logging.getLogger("daemon.scheduler")
+
+REFRESH_TENANTS_ID = "refresh_tenants"
+REFRESH_TENANTS_MINUTES = 5
+SERVICE_JOBS_ID = "service_jobs"
+PROCESS_JOB_IDS = (REFRESH_TENANTS_ID, SERVICE_JOBS_ID)
 
 
 def tenant_cadence(tenant_id: str) -> dict[str, Any]:
     """timezone + pulse_hour from tenants (CONTRACTS.md "Tenant cadence"); safe defaults if the DB is down."""
     try:
-        with get_conn() as conn:
+        with get_conn(tenant_id=tenant_id) as conn:  # bound to the tenant: RLS shows only its own row
             row = conn.execute(
                 "SELECT timezone, pulse_hour, pulse_channel FROM tenants WHERE id = %s", (tenant_id,)
             ).fetchone()
             row = row or {}
             return {
-                "timezone": row.get("timezone") or "America/Los_Angeles",
-                "pulse_hour": int(row.get("pulse_hour") or 7),
-                "pulse_channel": row.get("pulse_channel") or "web",
+                "timezone": row.get("timezone") or CADENCE_DEFAULTS["timezone"],
+                "pulse_hour": int(row.get("pulse_hour") or CADENCE_DEFAULTS["pulse_hour"]),
+                "pulse_channel": row.get("pulse_channel") or CADENCE_DEFAULTS["pulse_channel"],
             }
     except Exception:  # DB not reachable at boot → defaults; the job itself will fail loudly later
-        return {"timezone": "America/Los_Angeles", "pulse_hour": 7, "pulse_channel": "web"}
+        return dict(CADENCE_DEFAULTS)
 
 
 def tenant_timezone(tenant_id: str) -> str:
@@ -53,7 +71,7 @@ def tenant_timezone(tenant_id: str) -> str:
 def run_skill(name: str, tenant_id: str | None = None, **extra: Any) -> Any:
     tenant_id = tenant_id or settings.tenant_id
     skill = skills.get(name)
-    with get_conn() as conn:
+    with get_conn(tenant_id=tenant_id) as conn:
         ensure_tenant(conn, tenant_id)  # idempotent; the daemon must never fail on a fresh database
         ctx = build_ctx(conn, tenant_id, **extra)
         out = skill.run(ctx)
@@ -76,7 +94,7 @@ def run_signal_skills(tenant_id: str | None = None) -> dict[str, Any]:
 
 def run_approved(tenant_id: str | None = None) -> list[dict[str, Any]]:
     tenant_id = tenant_id or settings.tenant_id
-    with get_conn() as conn:
+    with get_conn(tenant_id=tenant_id) as conn:
         done = executors.run_all_approved(conn, tenant_id)
     if done:
         log.info("executed %d approvals for %s", len(done), tenant_id)
@@ -167,10 +185,18 @@ def service_asks(tenant_id: str | None = None, limit: int = 5) -> int:
     return done
 
 
+def service_jobs(tenants: list[str] | None = None, *, dsn: str | None = None) -> dict[str, Any]:
+    """Drain the onboarding job chain (tenant_jobs) — every tenant unless `tenants` pins some. Every 15 s."""
+    out = jobs.service_jobs(tenants, dsn=dsn)
+    if out["claimed"]:
+        log.info("serviced %d onboarding jobs: %s", out["claimed"], {k: out[k] for k in ("done", "queued", "failed")})
+    return out
+
+
 def weekly_review(tenant_id: str | None = None) -> str:
     """Friday 16:00 placeholder — Sales and Build weekly review lands in v1.1 (Architecture Brief §5.2)."""
     tenant_id = tenant_id or settings.tenant_id
-    with get_conn() as conn:
+    with get_conn(tenant_id=tenant_id) as conn:
         from daemon import llm
 
         llm.record_tier0(conn, tenant_id, "cockpit.weekly_review", "schedule", "placeholder: not implemented in v1")
@@ -188,9 +214,10 @@ def _summ(out: Any) -> str:
 # --- job table ------------------------------------------------------------------------------------
 
 
-def job_table(tenant_id: str) -> list[dict[str, Any]]:
-    """Declarative job list shared by APScheduler and the fallback loop."""
-    pulse_hour = tenant_cadence(tenant_id)["pulse_hour"]
+def job_table(tenant_id: str, cadence: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Declarative job list shared by APScheduler and the fallback loop. Ids are unqualified here; the scheduler
+    registers them as job_id(id, tenant_id)."""
+    pulse_hour = int((cadence or tenant_cadence(tenant_id))["pulse_hour"])
     # The Chief of Staff runs 30 minutes before the pulse so the pulse can read its brief: pulse_hour-1 at :30
     # (7 → 06:30). A midnight pulse (0) keeps the default 06:30 rather than wrapping to the previous day.
     cos_hour = pulse_hour - 1 if pulse_hour > 0 else 6
@@ -225,21 +252,150 @@ def job_table(tenant_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def build_scheduler(tenant_id: str | None = None) -> Any:
-    """Return a configured (not started) APScheduler BackgroundScheduler, or None if apscheduler is missing."""
-    tenant_id = tenant_id or settings.tenant_id
+def job_id(job: str, tenant_id: str) -> str:
+    """APScheduler id for one (job, tenant): "morning_pulse:unitone"."""
+    return f"{job}:{tenant_id}"
+
+
+def split_job_id(jid: str) -> tuple[str, str] | None:
+    """Inverse of job_id; None for process-wide jobs (refresh_tenants)."""
+    job, sep, tenant = jid.partition(":")
+    return (job, tenant) if sep and tenant else None
+
+
+def scheduled_tenants(sched: Any) -> set[str]:
+    """Tenants that currently have jobs registered on `sched`."""
+    out: set[str] = set()
+    for j in sched.get_jobs():
+        parts = split_job_id(j.id)
+        if parts:
+            out.add(parts[1])
+    return out
+
+
+def discover_tenants(dsn: str | None = None) -> list[dict[str, Any]]:
+    """active_tenants() on an anonymous service connection. Empty (and logged) when the DB is unreachable."""
+    try:
+        with get_conn(dsn, tenant_id="") as anon:
+            return active_tenants(anon)
+    except Exception as exc:
+        log.warning("could not list active tenants: %s", type(exc).__name__)
+        return []
+
+
+def add_tenant_jobs(sched: Any, tenant_id: str, cadence: dict[str, Any] | None = None) -> list[str]:
+    """Register the job table for one tenant in its own timezone. Existing ids are replaced (idempotent)."""
+    from apscheduler.triggers.cron import CronTrigger
+
+    cadence = cadence or tenant_cadence(tenant_id)
+    remove_tenant_jobs(sched, tenant_id)  # explicit: replace_existing does not dedupe pending jobs before start()
+    tz = ZoneInfo(cadence.get("timezone") or CADENCE_DEFAULTS["timezone"])
+    ids: list[str] = []
+    for job in job_table(tenant_id, cadence):
+        jid = job_id(job["id"], tenant_id)
+        sched.add_job(job["fn"], CronTrigger(timezone=tz, **job["cron"]), id=jid, name=jid, replace_existing=True)
+        ids.append(jid)
+    return ids
+
+
+def remove_tenant_jobs(sched: Any, tenant_id: str) -> list[str]:
+    removed: list[str] = []
+    for j in list(sched.get_jobs()):
+        parts = split_job_id(j.id)
+        if parts and parts[1] == tenant_id:
+            sched.remove_job(j.id)
+            removed.append(j.id)
+    return removed
+
+
+def refresh_tenants(sched: Any, tenants: list[dict[str, Any]] | None = None, *, dsn: str | None = None) -> dict:
+    """Reconcile the scheduler with active_tenants(): add jobs for new tenants, drop jobs for gone ones.
+
+    Runs every REFRESH_TENANTS_MINUTES as its own job, so a tenant created through the API gets its pulse
+    without a daemon restart. `tenants` is injectable for tests; None → discover from the DB. A failed discovery
+    (empty list because the DB was unreachable) removes nothing: we never unschedule on a transient error.
+    """
+    if tenants is None:
+        tenants = discover_tenants(dsn)
+        if not tenants:
+            return {"added": [], "removed": [], "rescheduled": [], "active": sorted(scheduled_tenants(sched))}
+    wanted = {t["id"]: t for t in tenants}
+    have = scheduled_tenants(sched)
+    added = [tid for tid in wanted if tid not in have]
+    removed = [tid for tid in have if tid not in wanted]
+    # cadence edits (onboarding sets pulse_hour/timezone after the tenant exists): re-register those jobs
+    rescheduled = [
+        tid for tid in wanted if tid in have and _cadence_key(wanted[tid]) != _registered_cadence(sched, tid)
+    ]
+    for tid in added + rescheduled:
+        add_tenant_jobs(sched, tid, wanted[tid])
+    for tid in removed:
+        remove_tenant_jobs(sched, tid)
+    if added or removed or rescheduled:
+        log.info("tenants refreshed: +%s -%s ~%s", added, removed, rescheduled)
+    return {"added": added, "removed": removed, "rescheduled": rescheduled, "active": sorted(wanted)}
+
+
+def _cadence_key(cadence: dict[str, Any]) -> tuple[str, int]:
+    return (str(cadence.get("timezone") or CADENCE_DEFAULTS["timezone"]), int(cadence.get("pulse_hour") or 7))
+
+
+def _registered_cadence(sched: Any, tenant_id: str) -> tuple[str, int] | None:
+    """(timezone, pulse_hour) as currently registered, read back from the morning_pulse trigger."""
+    job = sched.get_job(job_id("morning_pulse", tenant_id))
+    if job is None:
+        return None
+    trig = job.trigger
+    hour = next((f for f in trig.fields if f.name == "hour"), None)
+    try:
+        return (str(trig.timezone), int(str(hour)))
+    except (TypeError, ValueError):
+        return None
+
+
+def build_scheduler(tenants: str | list[str] | list[dict[str, Any]] | None = None, *, dsn: str | None = None) -> Any:
+    """Return a configured (not started) APScheduler BackgroundScheduler, or None if apscheduler is missing.
+
+    `tenants` None → every active tenant from the DB (production). A tenant id / list of ids pins the set
+    (dev: `daemon.main --tenant`). One job per (job, tenant) plus the process-wide refresh_tenants job.
+    """
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
-        from apscheduler.triggers.cron import CronTrigger
+        from apscheduler.triggers.interval import IntervalTrigger
     except ImportError:
         return None
-    tz = ZoneInfo(tenant_timezone(tenant_id))
     sched = BackgroundScheduler(
-        timezone=tz, job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 600}
+        timezone=ZoneInfo("UTC"), job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 600}
     )
-    for job in job_table(tenant_id):
-        sched.add_job(job["fn"], CronTrigger(timezone=tz, **job["cron"]), id=job["id"], name=job["id"])
+    pinned = tenants is not None
+    rows = _tenant_rows(tenants, dsn)
+    for t in rows:
+        add_tenant_jobs(sched, t["id"], t if "timezone" in t else None)
+    if not pinned:
+        sched.add_job(
+            lambda: refresh_tenants(sched, dsn=dsn),
+            IntervalTrigger(minutes=REFRESH_TENANTS_MINUTES),
+            id=REFRESH_TENANTS_ID,
+            name=REFRESH_TENANTS_ID,
+        )
+    # Track O: the onboarding job service is ONE job for the whole process (it claims across tenants itself);
+    # a pinned (dev) scheduler services only the pinned tenants' queues.
+    pinned_ids = [t["id"] for t in rows] if pinned else None
+    sched.add_job(
+        lambda: service_jobs(pinned_ids, dsn=dsn),
+        IntervalTrigger(seconds=SERVICE_JOBS_SECONDS),
+        id=SERVICE_JOBS_ID,
+        name=SERVICE_JOBS_ID,
+    )
     return sched
+
+
+def _tenant_rows(tenants: str | list[str] | list[dict[str, Any]] | None, dsn: str | None) -> list[dict[str, Any]]:
+    if tenants is None:
+        return discover_tenants(dsn)
+    if isinstance(tenants, str):
+        tenants = [tenants]
+    return [t if isinstance(t, dict) else {"id": t} for t in tenants]
 
 
 def _matches(cron: dict[str, Any], now: datetime) -> bool:
@@ -257,22 +413,41 @@ def _matches(cron: dict[str, Any], now: datetime) -> bool:
 
 
 def simple_loop(
-    tenant_id: str | None = None, *, sleep: Callable[[float], None] = time.sleep, once: bool = False
+    tenants: str | list[str] | None = None,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    once: bool = False,
+    dsn: str | None = None,
 ) -> None:
-    """Fallback when apscheduler is unavailable: wake every minute, run jobs whose cron matches."""
-    tenant_id = tenant_id or settings.tenant_id
-    tz = ZoneInfo(tenant_timezone(tenant_id))
-    last_minute: datetime | None = None
+    """Fallback when apscheduler is unavailable: wake every minute, run each tenant's jobs whose cron matches
+    in that tenant's timezone. The tenant list is re-read every REFRESH_TENANTS_MINUTES unless pinned. The
+    onboarding job service runs on every wake (≈ every 20 s) for the same tenants."""
+    pinned = tenants is not None
+    rows = _tenant_rows(tenants, dsn)
+    last_refresh = time.monotonic()
+    last_minute: dict[str, datetime] = {}
     while True:
-        now = datetime.now(UTC).astimezone(tz).replace(second=0, microsecond=0)
-        if now != last_minute:
-            last_minute = now
-            for job in job_table(tenant_id):
+        if not pinned and time.monotonic() - last_refresh >= REFRESH_TENANTS_MINUTES * 60:
+            rows = discover_tenants(dsn) or rows
+            last_refresh = time.monotonic()
+        for t in rows:
+            tid = t["id"]
+            cadence = t if "timezone" in t else tenant_cadence(tid)
+            tz = ZoneInfo(cadence.get("timezone") or CADENCE_DEFAULTS["timezone"])
+            now = datetime.now(UTC).astimezone(tz).replace(second=0, microsecond=0)
+            if now == last_minute.get(tid):
+                continue
+            last_minute[tid] = now
+            for job in job_table(tid, cadence):
                 if _matches(job["cron"], now):
                     try:
                         job["fn"]()
                     except Exception as exc:
-                        log.exception("job %s failed: %s", job["id"], type(exc).__name__)
+                        log.exception("job %s failed: %s", job_id(job["id"], tid), type(exc).__name__)
+        try:
+            service_jobs([t["id"] for t in rows] if pinned else None, dsn=dsn)
+        except Exception as exc:  # never let the queue take the loop down
+            log.exception("service_jobs failed: %s", type(exc).__name__)
         if once:
             return
         sleep(20)

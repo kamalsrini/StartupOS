@@ -65,6 +65,20 @@ export type Cockpit = {
     budget: { tier2_tokens_allowed: number; tier2_tokens_used: number; state: string } | null;
   };
 };
+export type JobStatus = "queued" | "running" | "done" | "failed";
+export type JobView = {
+  id: number;
+  kind: string; // backfill:<source> | signals | context_pack | chief_of_staff | morning_pulse
+  status: JobStatus;
+  attempts: number;
+  error: string | null;
+  source: string | null;
+  result: Record<string, unknown> | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
+export type OnboardingJobs = { queued: number; running: number; done: number; failed: number; last_error: string | null; chain: JobView[] };
 export type OnboardingStatus = {
   tenant_id: string;
   steps: { tenant: boolean; connections: boolean; compiled: boolean; cards: boolean; pulse: boolean; cadence: boolean };
@@ -72,6 +86,8 @@ export type OnboardingStatus = {
   cards_confirmed: string[];
   done: number;
   total: number;
+  jobs: OnboardingJobs;
+  first_pulse_ready: boolean;
 };
 
 export type Me = {

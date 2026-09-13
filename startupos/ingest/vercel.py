@@ -9,7 +9,6 @@ from typing import Any
 import httpx
 import psycopg
 
-from common.settings import settings
 from ingest import fixtures
 from ingest.base import Upserter, UpsertResult, parse_ts
 
@@ -49,23 +48,28 @@ def from_fixture(base: Path | None = None) -> list[dict[str, Any]]:
     return [normalize_deployment(d) for d in deployments]
 
 
-def fetch_live(token: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
-    tok = token or settings.secret(KEY_REF)
-    if not tok:
-        raise RuntimeError("VERCEL_TOKEN not configured")
+def fetch_live(token: str, team_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    if not token:
+        raise RuntimeError("vercel: no token")
     params: dict[str, Any] = {"limit": limit}
-    if settings.vercel_team_id:
-        params["teamId"] = settings.vercel_team_id
+    if team_id:
+        params["teamId"] = team_id
     with httpx.Client() as client:
-        resp = client.get(DEPLOYMENTS_URL, params=params, headers={"Authorization": f"Bearer {tok}"}, timeout=30.0)
+        resp = client.get(DEPLOYMENTS_URL, params=params, headers={"Authorization": f"Bearer {token}"}, timeout=30.0)
         resp.raise_for_status()
         return [normalize_deployment(d) for d in resp.json().get("deployments", [])]
 
 
-def has_credentials() -> bool:
-    return bool(settings.secret(KEY_REF))
-
-
-def sync(conn: psycopg.Connection, tenant_id: str, *, use_fixtures: bool = False) -> dict[str, UpsertResult]:
-    rows = from_fixture() if use_fixtures else fetch_live()
+def sync(
+    conn: psycopg.Connection,
+    tenant_id: str,
+    *,
+    api_key: str | None = None,
+    use_fixtures: bool = False,
+    fixtures_dir: Path | None = None,
+    team_id: str | None = None,
+    **_config: Any,
+) -> dict[str, UpsertResult]:
+    """Upsert deployments for `tenant_id`. Token and team id come from the runner (connection row), never env."""
+    rows = from_fixture(fixtures_dir) if use_fixtures else fetch_live(api_key or "", team_id)
     return {"deployments": deployments_upserter.upsert(conn, tenant_id, rows)}

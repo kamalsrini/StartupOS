@@ -13,7 +13,6 @@ from typing import Any
 import httpx
 import psycopg
 
-from common.settings import settings
 from ingest import fixtures
 from ingest.base import Upserter, UpsertResult, parse_money, parse_ts
 
@@ -203,31 +202,35 @@ def _get_all(client: httpx.Client, token: str, path: str) -> list[dict[str, Any]
             return items
 
 
-def fetch_live(token: str | None = None) -> dict[str, list[dict[str, Any]]]:
-    tok = token or settings.secret(KEY_REF)
-    if not tok:
-        raise RuntimeError("BREX_API_TOKEN not configured")
+def fetch_live(token: str) -> dict[str, list[dict[str, Any]]]:
+    if not token:
+        raise RuntimeError("brex: no api token")
     with httpx.Client() as client:
-        accounts_raw = _get_all(client, tok, ENDPOINTS["accounts"])
+        accounts_raw = _get_all(client, token, ENDPOINTS["accounts"])
         out = {
             "accounts_bank": [normalize_account(a) for a in accounts_raw],
-            "bills": [normalize_bill(b) for b in _get_all(client, tok, ENDPOINTS["bills"])],
-            "vendors": [normalize_vendor(v) for v in _get_all(client, tok, ENDPOINTS["vendors"])],
-            "cards": [normalize_card(c) for c in _get_all(client, tok, ENDPOINTS["cards"])],
+            "bills": [normalize_bill(b) for b in _get_all(client, token, ENDPOINTS["bills"])],
+            "vendors": [normalize_vendor(v) for v in _get_all(client, token, ENDPOINTS["vendors"])],
+            "cards": [normalize_card(c) for c in _get_all(client, token, ENDPOINTS["cards"])],
             "transactions": [],
         }
         for acct in accounts_raw:
             path = ENDPOINTS["transactions"].format(account_id=acct["id"])
-            out["transactions"].extend(normalize_transaction(t) for t in _get_all(client, tok, path))
+            out["transactions"].extend(normalize_transaction(t) for t in _get_all(client, token, path))
     return out
 
 
-def has_credentials() -> bool:
-    return bool(settings.secret(KEY_REF))
-
-
-def sync(conn: psycopg.Connection, tenant_id: str, *, use_fixtures: bool = False) -> dict[str, UpsertResult]:
-    data = from_fixture() if use_fixtures else fetch_live()
+def sync(
+    conn: psycopg.Connection,
+    tenant_id: str,
+    *,
+    api_key: str | None = None,
+    use_fixtures: bool = False,
+    fixtures_dir: Path | None = None,
+    **_config: Any,
+) -> dict[str, UpsertResult]:
+    """Upsert the five Brex tables for `tenant_id`. The token is an argument; this module never reads env."""
+    data = from_fixture(fixtures_dir) if use_fixtures else fetch_live(api_key or "")
     return {
         "accounts_bank": accounts_upserter.upsert(conn, tenant_id, data["accounts_bank"]),
         "bills": bills_upserter.upsert(conn, tenant_id, data["bills"]),

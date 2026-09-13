@@ -10,3 +10,4 @@ slack_sdk==3.44.1
 httpx==0.28.1
 itsdangerous==2.2.0
 PyJWT[crypto]==2.12.1
+cryptography==46.0.7

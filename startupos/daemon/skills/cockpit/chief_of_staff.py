@@ -233,7 +233,7 @@ def write_signals(ctx: Ctx, out: dict[str, Any]) -> dict[str, Any]:
             """INSERT INTO signals (id, tenant_id, module, rule_id, severity, kind, title, meta, entity, entity_id,
                                     suggested_skill, href, first_seen_at, last_seen_at, resolved_at)
                VALUES (%s, %s, %s, %s, %s, 'open', %s, %s, 'cos', %s, %s, NULL, %s, %s, NULL)
-               ON CONFLICT (id) DO UPDATE SET
+               ON CONFLICT (tenant_id, id) DO UPDATE SET
                  module = EXCLUDED.module, severity = EXCLUDED.severity, title = EXCLUDED.title, meta = EXCLUDED.meta,
                  last_seen_at = EXCLUDED.last_seen_at, resolved_at = NULL""",
             (sid, tenant, module, RULE_ID, sev, title, meta, sid.split(":", 1)[1], NAME, now, now),

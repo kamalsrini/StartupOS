@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS tenants (
 );
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pulse_hour SMALLINT NOT NULL DEFAULT 7;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS pulse_channel TEXT NOT NULL DEFAULT 'web';
+-- Sprint 3a (Track T): the scheduler and ingest iterate tenants WHERE status = 'active'; suspended/deleted tenants
+-- keep their rows but get no jobs and no ingest passes.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';  -- active | suspended | deleted
 
 CREATE TABLE IF NOT EXISTS users (
   id            TEXT PRIMARY KEY,
@@ -73,6 +76,18 @@ CREATE TABLE IF NOT EXISTS connections (
   last_error    TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (tenant_id, source)
+);
+
+-- Per-tenant secrets (Sprint 3a, Track S). Envelope-encrypted by common/secrets.py: the value is AES-GCM'd
+-- under a per-row random data key, which is itself wrapped with STARTUPOS_MASTER_KEY. Only common/secrets.py
+-- reads or writes ciphertext; the plaintext is never logged, never returned by the API, never in fixtures.
+CREATE TABLE IF NOT EXISTS tenant_secrets (
+  tenant_id     TEXT NOT NULL REFERENCES tenants(id),
+  name          TEXT NOT NULL,                    -- e.g. 'linear_api_key' (referenced as 'kv:linear_api_key')
+  ciphertext    BYTEA NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, name)
 );
 
 -- brain/ Markdown mirror. One row per file; path is the repo-relative path.
@@ -275,7 +290,7 @@ CREATE INDEX IF NOT EXISTS events_tenant_time ON events (tenant_id, occurred_at 
 
 -- Signals (deterministic rule hits) -----------------------------------------
 CREATE TABLE IF NOT EXISTS signals (
-  id            TEXT PRIMARY KEY,                 -- rule_id:entity_id (idempotent)
+  id            TEXT NOT NULL,                    -- rule_id:entity_id (idempotent within a tenant)
   tenant_id     TEXT NOT NULL REFERENCES tenants(id),
   module        TEXT NOT NULL,                    -- sales | finance | build | customers | marketing | web | social | security | cockpit
   rule_id       TEXT NOT NULL,
@@ -289,7 +304,8 @@ CREATE TABLE IF NOT EXISTS signals (
   href          TEXT,
   first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  resolved_at   TIMESTAMPTZ
+  resolved_at   TIMESTAMPTZ,
+  PRIMARY KEY (tenant_id, id)
 );
 CREATE INDEX IF NOT EXISTS signals_open ON signals (tenant_id, module) WHERE resolved_at IS NULL;
 
@@ -327,7 +343,7 @@ ALTER TABLE runs ADD COLUMN IF NOT EXISTS acted_by TEXT;
 
 -- Approvals (the gate) -------------------------------------------------------
 CREATE TABLE IF NOT EXISTS approvals (
-  id            TEXT PRIMARY KEY,
+  id            TEXT NOT NULL,
   tenant_id     TEXT NOT NULL REFERENCES tenants(id),
   module        TEXT NOT NULL,
   type          TEXT NOT NULL,                    -- 'Linear · assign', 'Slack · nudge', ...
@@ -336,15 +352,34 @@ CREATE TABLE IF NOT EXISTS approvals (
   exec          JSONB,                            -- {server, tool, input} or null for record-only
   status        TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | declined | executed | failed
   created_by_run TEXT REFERENCES runs(id),
-  signal_id     TEXT REFERENCES signals(id),
+  signal_id     TEXT,
   decided_by    TEXT,                             -- users.id (or 'slack:<id>' before mapping, 'system')
   decided_at    TIMESTAMPTZ,
   decline_reason TEXT,
   result        JSONB,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- Executor allow-list is enforced in the DB too: only Linear and Slack may ever be executed. Brex never.
-  CONSTRAINT approvals_exec_server_allowed CHECK (exec IS NULL OR (exec->>'server') IN ('Linear','Slack'))
+  CONSTRAINT approvals_exec_server_allowed CHECK (exec IS NULL OR (exec->>'server') IN ('Linear','Slack')),
+  PRIMARY KEY (tenant_id, id),
+  CONSTRAINT approvals_signal_fkey FOREIGN KEY (tenant_id, signal_id) REFERENCES signals (tenant_id, id)
 );
+-- Sprint 3a (Track T): signal and approval ids are derived from rule + entity ids (marketing.analytics_off:posthog,
+-- assign-acm-158) and repeat across tenants, so both keys are per tenant. Migrate a pre-3a database in place.
+DO $$
+BEGIN
+  IF (SELECT array_length(conkey, 1) FROM pg_constraint WHERE conrelid = 'signals'::regclass AND contype = 'p') = 1 THEN
+    ALTER TABLE approvals DROP CONSTRAINT IF EXISTS approvals_signal_id_fkey;
+    ALTER TABLE signals DROP CONSTRAINT signals_pkey;
+    ALTER TABLE signals ADD PRIMARY KEY (tenant_id, id);
+  END IF;
+  IF (SELECT array_length(conkey, 1) FROM pg_constraint WHERE conrelid = 'approvals'::regclass AND contype = 'p') = 1 THEN
+    ALTER TABLE approvals DROP CONSTRAINT approvals_pkey;
+    ALTER TABLE approvals ADD PRIMARY KEY (tenant_id, id);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'approvals'::regclass AND conname = 'approvals_signal_fkey') THEN
+    ALTER TABLE approvals ADD CONSTRAINT approvals_signal_fkey FOREIGN KEY (tenant_id, signal_id) REFERENCES signals (tenant_id, id);
+  END IF;
+END$$;
 CREATE INDEX IF NOT EXISTS approvals_pending ON approvals (tenant_id, module) WHERE status = 'pending';
 
 -- Asks queue: the API never calls a model. A question from the web/API lands here; the daemon services it
@@ -362,6 +397,29 @@ CREATE TABLE IF NOT EXISTS asks (
   answered_at   TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS asks_pending ON asks (tenant_id, created_at) WHERE status = 'pending';
+
+-- Onboarding job chain (Sprint 3a, Track O) ---------------------------------------------------------
+-- POST /onboarding/compile enqueues, in order, backfill:<source> per connected source → signals → context_pack →
+-- chief_of_staff → morning_pulse. daemon/jobs.py services the queue every 15 s through the SECURITY DEFINER
+-- tenant_jobs_claim() (db/rls.sql): one queued job at a time, FOR UPDATE SKIP LOCKED, in created_at order, and a job
+-- runs only when no earlier job of the same tenant is still queued/running. Each job then executes on a connection
+-- bound to its tenant. Failures record error/attempts and retry up to 3 times; `run_after` carries the backoff.
+CREATE TABLE IF NOT EXISTS tenant_jobs (
+  id            BIGSERIAL PRIMARY KEY,
+  tenant_id     TEXT NOT NULL REFERENCES tenants(id),
+  kind          TEXT NOT NULL,                    -- backfill:<source> | signals | context_pack | chief_of_staff | morning_pulse
+  payload       JSONB NOT NULL DEFAULT '{}',      -- {source} for backfills; `result` is appended when the job finishes
+  status        TEXT NOT NULL DEFAULT 'queued',   -- queued | running | done | failed
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  error         TEXT,
+  run_after     TIMESTAMPTZ NOT NULL DEFAULT now(),  -- retry backoff: not claimable before this
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  started_at    TIMESTAMPTZ,
+  finished_at   TIMESTAMPTZ,
+  CONSTRAINT tenant_jobs_status_check CHECK (status IN ('queued', 'running', 'done', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS tenant_jobs_queue ON tenant_jobs (status, created_at);
+CREATE INDEX IF NOT EXISTS tenant_jobs_tenant ON tenant_jobs (tenant_id, created_at DESC);
 
 -- Budgets --------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS budgets (

@@ -1,4 +1,10 @@
-"""Onboarding (Day 0): tenant → connections → compile → confirm cards → cadence → status. Deterministic, no model."""
+"""Onboarding (Day 0): tenant → connections → compile → confirm cards → cadence → status. Deterministic, no model.
+
+Sprint 3a (Track O): `POST /onboarding/compile` no longer waits for anything. It returns the five cards from whatever
+is in the DB right now and enqueues the first-pulse chain in `tenant_jobs` (backfill per connected source → signals →
+context_pack → chief_of_staff → morning_pulse); the daemon's job service runs it. `GET /onboarding/status` reports the
+chain (`jobs`) and `first_pulse_ready` so the wizard can show progress instead of "compiling…".
+"""
 
 from __future__ import annotations
 
@@ -14,9 +20,12 @@ from pydantic import BaseModel, Field
 from api.deps import api_dsn, current_principal, get_db, get_tenant, now_utc, scalar, set_session_cookie
 from auth import bootstrap, google, sessions
 from auth.identity import Principal
+from common import jobs as job_queue
+from common import secrets
 from common.db import get_conn
 from common.ids import run_id
 from common.models import MemoryCard
+from common.settings import settings
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
@@ -45,7 +54,9 @@ class TenantIn(BaseModel):
 
 class ConnectionIn(BaseModel):
     source: str
-    secret_ref: str
+    # The key itself → encrypted at rest as kv:<source>_api_key. repr=False keeps it out of any log line.
+    credential: str | None = Field(default=None, repr=False)
+    secret_ref: str | None = None  # or a reference the operator manages ('env:NAME' / 'kv:NAME')
     config: dict[str, Any] = {}
 
 
@@ -169,16 +180,39 @@ def create_tenant(body: TenantIn, request: Request, response: Response) -> dict[
 def upsert_connection(
     body: ConnectionIn, conn: psycopg.Connection = Depends(get_db), tenant_id: str = Depends(get_tenant)
 ) -> dict[str, Any]:
+    """Connect a source. Either hand us the key (`credential`) — stored encrypted for this tenant only, referenced as
+    `kv:<source>_api_key` — or a `secret_ref` the operator manages. The plaintext is never logged or returned."""
     source = body.source.lower().strip()
     if source not in SOURCES:
         raise HTTPException(status_code=422, detail=f"unknown source {source!r}; one of {', '.join(SOURCES)}")
-    ref = body.secret_ref.strip()
-    if not (ref.startswith("env:") or ref.startswith("kv:")) or len(ref) < 5:
-        raise HTTPException(
-            status_code=422, detail="secret_ref must be 'env:NAME' or 'kv:NAME' — never the secret itself"
-        )
+    credential = body.credential.strip() if body.credential is not None else None
+    if credential is not None and not credential:
+        raise HTTPException(status_code=422, detail="credential must not be empty")
+    if credential is not None:
+        ref = f"kv:{source}_api_key"
+    else:
+        ref = (body.secret_ref or "").strip()
+        if not (ref.startswith("env:") or ref.startswith("kv:")) or len(ref) < 5:
+            raise HTTPException(
+                status_code=422,
+                detail="give `credential` (the key) or a secret_ref 'env:NAME' / 'kv:NAME' — never the key as a ref",
+            )
+        # env: refs are the operator's own keys (the install tenant, TENANT_ID). Any other tenant pointing a
+        # connection at them would ingest and act with the operator's Linear/Slack/Brex — refuse, never fall through.
+        if ref.startswith("env:") and not secrets.env_ref_allowed(tenant_id, source, ref):
+            raise HTTPException(
+                status_code=403,
+                detail="env: secret refs are operator-managed and not available to this tenant; pass `credential`",
+            )
     if not conn.execute("SELECT 1 FROM tenants WHERE id = %s", (tenant_id,)).fetchone():
         raise HTTPException(status_code=404, detail="tenant not found; POST /onboarding/tenant first")
+    if credential is not None:
+        try:
+            secrets.put(conn, tenant_id, ref[len("kv:") :], credential)
+        except secrets.SecretsUnavailable:
+            raise HTTPException(
+                status_code=503, detail="secret storage is not configured (STARTUPOS_MASTER_KEY); ask your operator"
+            ) from None
     row = conn.execute(
         """INSERT INTO connections (id, tenant_id, source, secret_ref, config, status)
            VALUES (%s, %s, %s, %s, %s::jsonb, 'connected')
@@ -187,16 +221,36 @@ def upsert_connection(
            RETURNING id, tenant_id, source, secret_ref, config, status, last_sync_at, created_at""",
         (f"{tenant_id}:{source}", tenant_id, source, ref, json.dumps(body.config)),
     ).fetchone()
-    return dict(row)
+    out = dict(row)
+    out["has_credential"] = _has_credential(conn, tenant_id, ref)
+    return out
+
+
+def _has_credential(conn: psycopg.Connection, tenant_id: str, ref: str | None) -> bool:
+    """Does StartupOS hold a usable key for this ref? kv: → an encrypted row exists for this tenant (no decrypt,
+    no master key needed); env: → the variable is set in the service environment. Never the value itself."""
+    scheme, _, name = (ref or "").partition(":")
+    if scheme == "kv" and name:
+        return secrets.exists(conn, tenant_id, name)
+    if scheme == "env" and name:
+        # Only the install tenant may use env refs; for anyone else the answer is False (no env probing either).
+        return tenant_id == settings.tenant_id and bool(settings.secret(ref))
+    return False
 
 
 @router.get("/connections")
 def list_connections(conn: psycopg.Connection = Depends(get_db), tenant_id: str = Depends(get_tenant)) -> list[dict]:
+    """Connections with `secret_ref` and `has_credential` only — a credential is write-only through this API."""
     rows = conn.execute(
         "SELECT id, source, secret_ref, config, status, last_sync_at, last_error FROM connections WHERE tenant_id=%s ORDER BY source",
         (tenant_id,),
     ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["has_credential"] = _has_credential(conn, tenant_id, d.get("secret_ref"))
+        out.append(d)
+    return out
 
 
 # --- compile -------------------------------------------------------------------
@@ -352,19 +406,55 @@ def compile_onboarding(
     tenant_id: str = Depends(get_tenant),
     principal: Principal = Depends(current_principal),
 ) -> dict[str, Any]:
+    """Five cards from the DB as it is now + the first-pulse job chain, enqueued (idempotent) for the daemon.
+
+    Returns immediately: the backfill, signals, context pack, Chief of Staff and morning pulse run in the daemon's
+    job service; poll GET /onboarding/status for progress. Re-running compile while jobs are queued/running adds
+    nothing (one active job per kind per tenant); after the chain finished it queues a fresh one.
+    """
     cards, counts = compile_cards(conn, tenant_id)
+    jobs = job_queue.enqueue_chain(conn, tenant_id)
+    queued = [j["kind"] for j in jobs if j["enqueued"]]
     outcome = (
         "Read " + ", ".join(f"{v} {k}" for k, v in counts.items() if v)
         if any(counts.values())
         else "Read 0 rows — connect a source and run ingest"
     )
+    if queued:
+        outcome += f"; queued {len(queued)} jobs: {', '.join(queued)}"
     # Tier-0 ledger row: no model, zero cost. Marks the 'compiled' onboarding step.
     conn.execute(
         """INSERT INTO runs (id, tenant_id, trigger, skill, tier, model, status, outcome, finished_at, acted_by)
            VALUES (%s, %s, 'ask', %s, 0, NULL, 'ok', %s, %s, %s)""",
         (run_id(), tenant_id, COMPILE_SKILL, outcome, now_utc(), principal.user_id),
     )
-    return {"cards": [c.model_dump() for c in cards], "counts": counts, "outcome": outcome, "tier": 0}
+    return {
+        "cards": [c.model_dump() for c in cards],
+        "counts": counts,
+        "jobs": [{**job_queue.public(j), "enqueued": j["enqueued"]} for j in jobs],
+        "outcome": outcome,
+        "tier": 0,
+    }
+
+
+@router.get("/cards")
+def read_cards(conn: psycopg.Connection = Depends(get_db), tenant_id: str = Depends(get_tenant)) -> dict[str, Any]:
+    """The five cards + counts from the DB as it is now — read-only (no jobs queued, no ledger row). The wizard
+    re-reads these once the backfill landed instead of re-compiling, which would queue another chain."""
+    cards, counts = compile_cards(conn, tenant_id)
+    return {"cards": [c.model_dump() for c in cards], "counts": counts}
+
+
+@router.get("/jobs")
+def list_jobs(
+    conn: psycopg.Connection = Depends(get_db), tenant_id: str = Depends(get_tenant), limit: int = 50
+) -> list[dict[str, Any]]:
+    """The tenant's job rows, newest first (operators; the wizard reads the summary in /status)."""
+    rows = conn.execute(
+        f"SELECT {job_queue.JOB_COLUMNS} FROM tenant_jobs WHERE tenant_id = %s ORDER BY created_at DESC, id DESC LIMIT %s",
+        (tenant_id, max(1, min(limit, 500))),
+    ).fetchall()
+    return [job_queue.public(dict(r)) for r in rows]
 
 
 @router.post("/confirm")
@@ -429,6 +519,8 @@ def onboarding_status(
             "cards_confirmed": [],
             "done": 0,
             "total": 6,
+            "jobs": {"queued": 0, "running": 0, "done": 0, "failed": 0, "last_error": None, "chain": []},
+            "first_pulse_ready": False,
         }
     n_conn = scalar(conn, "SELECT count(*) FROM connections WHERE tenant_id=%s AND status='connected'", (tenant_id,))
     compiled = scalar(conn, "SELECT count(*) FROM runs WHERE tenant_id=%s AND skill=%s", (tenant_id, COMPILE_SKILL)) > 0
@@ -466,4 +558,7 @@ def onboarding_status(
         "cards_confirmed": sorted(set(confirmed)),
         "done": sum(steps.values()),
         "total": len(steps),
+        # Track O: the first-pulse chain as the daemon's job service sees it, and whether a pulse run exists yet.
+        "jobs": job_queue.status_summary(conn, tenant_id),
+        "first_pulse_ready": pulse,
     }
