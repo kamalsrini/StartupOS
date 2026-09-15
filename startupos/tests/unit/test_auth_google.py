@@ -141,3 +141,13 @@ def test_exchange_code_uses_injected_client():
 
     with pytest.raises(google.GoogleAuthError):
         google.exchange_code("c0de", client=Bad())
+
+
+def test_unverified_email_raises_the_specific_error(keypair):
+    """Sprint 3d (Track G): the routers answer "Google has not verified that address" only for this one."""
+    pem, _ = keypair
+    with pytest.raises(google.UnverifiedEmailError):
+        google.verify_id_token(mint(pem, email_verified=False), "n-1")
+    with pytest.raises(google.GoogleAuthError) as caught:
+        google.verify_id_token(mint(pem, nonce="wrong"), "n-1")
+    assert not isinstance(caught.value, google.UnverifiedEmailError)

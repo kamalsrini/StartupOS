@@ -246,6 +246,29 @@ def open_high_signals(tenant_id: str) -> list[str]:
         ]
 
 
+def signal_refs(tenant_id: str) -> list[str]:
+    return [ref for _k, ref, _c, _s in ledger(tenant_id) if ref.startswith("signal:")]
+
+
+def drain_signal_backlog(tenant_id: str, ticks: int = 20) -> int:
+    """Deliver until nothing new goes out, and return how many signals that took.
+
+    How many `high`/`cos.risk` signals the shared fixtures raise is NOT a constant: `finance.bill_due_7d` and
+    `finance.cash_low` are relative to the clock, so the count moves as the fixture dates age (it was 5 in early
+    September 2026 and is 6 from the 12th onwards). Delivery is deliberately rate-limited to
+    `delivery.SIGNALS_PER_TICK` per tick, so "one tick drains the backlog" is a fixture-shaped assumption and
+    nothing in this walk may make it. Drain explicitly instead; a second call returning 0 is the dedupe claim.
+    """
+    sent = 0
+    for _ in range(ticks):
+        out = scheduler.deliver_signals(tenant_id)
+        new = len([d for d in out if d["status"] == "sent"])
+        if not new:
+            return sent
+        sent += new
+    raise AssertionError(f"signal backlog for {tenant_id} did not drain in {ticks} ticks")
+
+
 def button_action_ids(blocks: list[dict[str, Any]] | None) -> list[str]:
     return [
         el.get("action_id")
@@ -457,8 +480,12 @@ def test_the_whole_slack_chain_for_two_tenants_in_two_workspaces(chain, monkeypa
     refs_after = [ref for _k, ref, _c, _s in ledger(A["tenant"]) if ref.startswith("signal:")]
     assert len(refs_after) == len(set(refs_after))  # one ledger row per signal, ever
     assert refs_after[: len(refs_before)] == refs_before  # nothing already delivered was delivered again
-    assert set(refs_after) == {f"signal:{s}" for s in open_high_signals(A["tenant"])}  # the backlog drained
+    assert set(refs_after) <= {f"signal:{s}" for s in open_high_signals(A["tenant"])}  # only real signals
     assert len(slack.posts) - posts_after_first_tick == len(refs_after) - len(refs_before)
+    # …and however many ticks the backlog needs at 5 per tick, it drains completely and then stays drained
+    drain_signal_backlog(A["tenant"])
+    assert set(signal_refs(A["tenant"])) == {f"signal:{s}" for s in open_high_signals(A["tenant"])}
+    assert drain_signal_backlog(A["tenant"]) == 0  # a drained backlog posts nothing at all
 
     # === 3. a skill proposed an approval, and it carries the buttons ==============================
     proposal = approval_row(A["tenant"], APPROVAL_ID)
@@ -649,6 +676,13 @@ def test_the_whole_slack_chain_for_two_tenants_in_two_workspaces(chain, monkeypa
 
     # and B is untouched by any of it: still installed, still delivering, with its own token
     assert as_company(client, cookies[B["tenant"]]).get("/slack/status").json()["connected"] is True
+    # B only ever ran one tick, so whatever the fixtures raised beyond SIGNALS_PER_TICK is still queued.
+    # Drain it (with B's own token, into B's own channel) so the next delivery is exactly the new signal.
+    posts_before_drain = len(slack.posts)
+    drain_signal_backlog(B["tenant"])
+    assert drain_signal_backlog(B["tenant"]) == 0
+    assert set(signal_refs(B["tenant"])) == {f"signal:{s}" for s in open_high_signals(B["tenant"])}
+    assert all(p["token"] == B["bot_token"] and p["channel"] == B["channel"] for p in slack.posts[posts_before_drain:])
     with app_conn_for(B["tenant"]) as c:
         c.execute(
             """INSERT INTO signals (id, tenant_id, module, rule_id, severity, kind, title)
@@ -660,6 +694,7 @@ def test_the_whole_slack_chain_for_two_tenants_in_two_workspaces(chain, monkeypa
     new_posts = slack.posts[posts_before:]
     assert len(new_posts) == 1 and new_posts[0]["channel"] == B["channel"]
     assert new_posts[0]["token"] == B["bot_token"]
+    assert "signal:cos.risk:beta-still-works" in signal_refs(B["tenant"])
 
     # the whole run: exactly two tokens ever used, each only in its own channel
     assert slack.tokens() == {A["bot_token"], B["bot_token"]}

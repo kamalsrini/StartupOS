@@ -268,3 +268,147 @@ Shared vocabulary: **install** = a `slack_installations` row (one Slack workspac
 **End-to-end verification (2026-09-13).** One black-box regression walk of the whole chain, `tests/regression/test_slack_end_to_end.py` (marked `regression`), against real Postgres and the real FastAPI app through `TestClient`, with only the network faked: `oauth.v2.access`, `chat.postMessage`, `chat.update`, Linear's GraphQL and the Anthropic client are injected, so the run is offline and deterministic. Two companies in two workspaces do every step at once and each step asserts the other saw nothing: sign-up over `POST /onboarding/tenant` → `GET /slack/install` → the real `GET /slack/oauth/callback` with a signed state (installation row + encrypted `tenant_secrets.slack_bot_token` + `connections[slack]`, no token in the table, the response or a log) → `ingest.runner` fixtures → `scheduler.tick_15m` (signal engine → skills → delivery → executors) posting the high signal to that tenant's channel with that tenant's token and writing the ledger row, a second tick delivering only the backlog and never a ref twice → `build.assign_owner` proposing `assign-acm-158`, announced with `approval_approve`/`approval_decline` carrying the approval id → a signed `POST /slack/interactivity` deciding it through the gate, running the Linear executor with THAT tenant's own API key and editing the message in place at the ledger's `ts` (the second press decides nothing, executes nothing and re-renders; a press by tenant A's Slack user against a tenant-B-only approval is `GONE` with no state change, and B's founder pressing A's button gets the link hint) → a `message.im` on `POST /slack/events` acknowledged in well under Slack's 3 s, idempotent on `event_id`, drained through `tenant_jobs` and answered in the DM with the right token → `app_uninstalled` revoking the install, the secret and the connection, after which the next tick is a clean `skipped` that posts nothing and writes no ledger row (so the ref is not blacklisted), inbound events and presses from the revoked workspace are clean 200s, and tenant B still delivers with its own token. Two operational claims sit in the same file: with the three `STARTUPOS_SLACK_*` vars unset the app still imports in a fresh interpreter and `/health` is 200 while `/slack/install`, `/slack/oauth/callback`, `/slack/events` and `/slack/interactivity` all answer 503 (`/slack/status` deliberately still answers, with `configured: false`, because Settings has to render it); and `db/schema.sql` + `db/rls.sql` apply twice more over a populated database with no row, column, policy or grant lost — forced RLS and the SECURITY DEFINER lookups still hold afterwards. `make regression` now passes `STARTUPOS_TEST_DSN` like `make functional`, because the gate needs Postgres. No product defect was found by the walk; the file ends with the list of assumptions only a real Slack workspace can settle (OAuth app settings, Block Kit acceptance, channel membership, real-network latency, rate limits, Events/interactivity subscriptions). Gates green (340 unit / 104 functional / 10 regression).
 
 **Channel gap closed + operator runbook (2026-09-13).** The end-to-end walk left one real defect standing: `tenants.slack_channel` was `NOT NULL DEFAULT '#general'` and outranks the install's `default_channel`, but nothing in the API or the web app ever wrote it — so the channel a founder picks is captured and then ignored, and every tenant posts to `#general` until an operator edits the row. Fixed without changing the precedence order (explicit → `tenants.slack_channel` → install `default_channel` → skip): (1) `db/schema.sql` makes the column NULLABLE with no default — unset means "use the install's channel" — and a one-shot, self-guarding `DO` block (the guard is "the column still has a default", false ever after) drops NOT NULL and the default and turns every row still holding the untouched `'#general'` into NULL; nothing had ever written the column, so every such value was that default. `auth/slack_install.py::save_installation` still does not touch it — `default_channel` stays the source of truth until a founder overrides it. (2) `POST /onboarding/cadence` takes an optional `slack_channel`, validated by the new `common.tenants.normalize_slack_channel` (`#name`, lower-cased like Slack does, or a `C`/`G`/`D` channel id; empty/null clears the override) so a typo is a 422 in Settings rather than a `channel_not_found` the daemon meets at 7am. The same endpoint became a partial update — every field now means "leave this as it is" when omitted, and an omitted `tier2_tokens_allowed` keeps the month's budget — because Settings edits one field at a time and silently resetting a founder's timezone or budget would be a worse bug than the one being fixed; the wizard, which always sends all four, is unaffected. (3) `GET /slack/status` reports the channel actually in effect (`channel`), the override (`slack_channel`), the install's (`default_channel`), the mode (`pulse_channel`) and `delivers`, computed with delivery's own helpers so the two cannot drift; `web/app/settings/page.tsx` renders it and lets the founder change it next to the connection status. Tests: `tests/unit/test_tenant_channel.py` (the validator), two in `tests/unit/test_delivery.py` (unset → the install's channel; an override beats it), `tests/functional/test_slack_channel.py` (the routes, the 422s, clearing, the rest of the cadence surviving, a revoked install, and the migration — the legacy shape is re-created, the schema re-applied, and delivery then resolves the install's channel), and the regression walk now sets the channel through the API instead of an operator `UPDATE`. Known gap, documented not coded around: Slack returns the channel picked at install only for the `incoming-webhook` scope, which this app deliberately does not request, so in a real install `default_channel` is `#general` and Settings is where the channel is really chosen. `docs/SLACK-SETUP.md` is the operator runbook for creating the Slack app (credentials, redirect URL, the seven scopes, events, interactivity, App Home, distribution, the founder flow, a verification checklist and a first-day troubleshooting table) and states plainly that Slack cannot verify the request URL until the API is reachable over public HTTPS — today port 8000 is closed in the VM's NSG and there is no TLS. Gates green (365 unit / 118 functional / 10 regression).
+
+## Sprint 3d — Public hosting and sign-in (2026-09-15)
+
+Goal: **one HTTPS URL the founder can send to another person, who signs in with Google and gets their own company brain.** Today the web app is not deployed at all (compose has no `web` service), the API is plain HTTP on a port closed in the NSG, and no Google OAuth client exists — so nothing can be shared and Slack cannot reach us. Two tracks, then validation.
+
+Topology decision (fixed): **one hostname, one certificate, same-site cookies.** `https://<domain>/` serves the Next.js app; `https://<domain>/api/...` serves FastAPI. Not two hostnames (would force `SameSite=None` + CORS) and not a path-stripping proxy (would break `Set-Cookie` paths). The proxy passes `/api/...` through unchanged and the API owns the prefix.
+
+### Track H — hosting (owns `docker-compose.yml`, `Dockerfile.web`, `Caddyfile`, `scripts/deploy_azure.sh`, `docs/HOSTING.md`, the prefix support in `api/main.py` + `auth/config.py`)
+- `STARTUPOS_PATH_PREFIX` (default empty) makes the API serve every route under that prefix — routers included with the prefix, and **every `Set-Cookie` path prefixed too** (`/auth/google` → `/api/auth/google`), so the OAuth cookie is still sent. Empty prefix must behave exactly as today; a test proves both modes.
+- `STARTUPOS_PUBLIC_URL` becomes the full public base including the prefix (`https://<domain>/api`), so `auth/google.redirect_uri()` and the Slack routes are correct with no further change. `STARTUPOS_WEB_URL` becomes `https://<domain>`. `STARTUPOS_COOKIE_SECURE=1` in production.
+- `web` service: multi-stage `Dockerfile.web` building the Next.js app in `output: "standalone"` mode, running as a non-root user on port 3000. `NEXT_PUBLIC_API_URL=/api` (same origin, relative) — the web app must work with a relative base, so `web/lib/api.ts` joining logic has to handle it.
+- `caddy` service: image `caddy:2-alpine`, ports 80 and 443, volumes for `caddy_data`/`caddy_config` (certificate persistence across deploys — losing it re-issues and risks Let's Encrypt rate limits). `Caddyfile` routes `handle /api/*` → `api:8000` and `handle` → `web:3000`, sets security headers (HSTS, `X-Content-Type-Options`, `Referrer-Policy`, a frame policy), and compresses. Domain and ACME e-mail come from `${STARTUPOS_DOMAIN}` / `${STARTUPOS_ACME_EMAIL}`.
+- **Local and CI must not change:** with `STARTUPOS_DOMAIN` unset, `docker compose up` brings up the old set on plain HTTP (`caddy`/`web` behind a compose profile, or a `:80` site block), and `make check` never needs either.
+- The API's `8000:8000` port publish is removed in favour of the proxy; the VM then exposes only 22, 80 and 443. `scripts/deploy_azure.sh` builds and starts the new services and prints the public URL.
+- `docs/HOSTING.md`: giving the VM a DNS name (Azure DNS label → `<label>.<region>.cloudapp.azure.com`, no domain purchase; or an A record such as `os.unitone.ai` → the VM IP), opening 80/443 in the NSG (exact `az` commands and the portal path), the `.env` additions, the deploy, and how to verify the certificate. Also: what to change if the domain moves later, and the Let's Encrypt rate-limit warning.
+
+### Track G — sign-in (owns `web/app/login/*`, `web/app/page.tsx`, `web/components/*` auth bits, `api/routers/auth.py` sign-out/me surface, `docs/GOOGLE-SIGNIN.md`)
+- The existing backend (`auth/google.py`, `GET /auth/google`, `GET /auth/google/callback`) is the mechanism — verify it end to end and fix what does not work rather than rewriting it.
+- A signed-out visitor to any page lands on `/login` with one "Continue with Google" button (and the bootstrap path only when `NEXT_PUBLIC_ALLOW_BOOTSTRAP=1`). After the callback the browser is redirected to `STARTUPOS_WEB_URL` with the session cookie set, and the app shows the signed-in user with a working sign-out.
+- **Self-serve for a new person:** a Google identity that matches no existing user currently 403s ("ask your owner to invite you"). That is right for joining an existing company and wrong for a stranger the founder shared the link with. Resolve it explicitly: a verified Google e-mail with no matching user is offered **onboarding for a new tenant of their own** (the existing `POST /onboarding/tenant` with the id_token), so sharing the URL works; joining someone else's company stays invite-only (unchanged 403). Make the copy on both paths unambiguous.
+- `docs/GOOGLE-SIGNIN.md`: creating the Google Cloud OAuth client (consent screen, user type, scopes `openid email profile`), the exact authorised redirect URI (`https://<domain>/api/auth/google/callback`) and JavaScript origin, the two `.env` variables, and the publishing/verification step that decides whether anyone outside the founder's own Google account can sign in (a testing-mode client only admits listed test users — say so plainly, it is the most likely "I shared it and they could not get in").
+- Tests: signed-out redirect, state/nonce mismatch, an unverified Google e-mail refused, a new identity reaching new-tenant onboarding rather than a dead end, an existing user landing in their own tenant, sign-out clearing the session.
+
+### Validation (both tracks)
+`make check` green; `cd web && npm run build && npx tsc --noEmit && npm run lint` green; `docker compose config` valid with and without `STARTUPOS_DOMAIN`; a `scripts/smoke_public.sh <url>` the operator runs after deploying that checks TLS, `/`, `/api/health`, that `/api/slack/events` is signature-gated, that an unauthenticated API route is 401, and that the certificate is not self-signed.
+
+**Track G — as built (2026-09-15).** Sign-in verified end to end against the existing backend and fixed where it
+did not work, not rewritten. The product decision is implemented as the contract fixes it: `auth_lookup_google`
+finding **no user at all** is now a sign-up, not a 403 — the callback redirects to `<web>/login?new=google&email=…`
+and puts the *verified* id_token in a new signed, HttpOnly, 15-minute cookie (`sos_signup`, its own itsdangerous
+salt, `path=auth.config.cookie_path("/onboarding")`), which `POST /onboarding/tenant` accepts in place of
+`google_id_token` and verifies again before it counts. The cookie exists so the id_token never reaches
+JavaScript, the URL bar, browser history, a Referer header or a proxy log — the only deviation from the
+contract's literal "with the id_token", and the endpoint's own `google_id_token` field still works unchanged.
+Everything else about the decision is unchanged: an active user signs into **their own tenant** (never
+`settings.tenant_id`), and a user row that exists but is not active is still refused — an address that already
+belongs to a company never gets a second, empty one. What was broken or missing: (1) `POST /auth/logout`
+required a live principal, so signing out 401'd exactly when the session had already expired and left the dead
+cookie in the browser — it is now `optional_principal`, always 200 `{ok, revoked}`, always clears the cookie,
+and is in `PUBLIC_PATHS` (it touches only the caller's own session); (2) every callback failure was a bare JSON
+403 on an API URL, which a person cannot act on — the six failures (`cancelled`, `state_mismatch`,
+`email_unverified`, `failed`, `account_inactive`, `not_configured`) now render a small themed HTML page that
+says what happened and links back to `<web>/login?error=…`, with the same status codes (403/503) and a JSON body
+still available to anything that sends `Accept: application/json`; (3) an unverified Google address was
+indistinguishable from a forged token — `auth/google.UnverifiedEmailError` splits it out so it can be answered
+honestly; (4) the state comparison is `hmac.compare_digest`; (5) `web/app/page.tsx` replaces the
+`next.config.mjs` `/` → `/cockpit` redirect, so a signed-out stranger lands on `/login` in one hop instead of
+loading the cockpit and being bounced out of it. New public read-only route `GET /auth/providers` →
+`{google, bootstrap}` (booleans only, no client id), so the sign-in page can say "Google sign-in is not
+configured" instead of sending the visitor to a 503. The sign-in page is the whole product decision in copy:
+the sign-up panel names the address Google verified, says it creates "a brand-new, empty workspace", says in
+bold that it is **not** how you join a company already on StartupOS, and tells anyone who was invited to stop
+and ask for an invitation to that exact address; the plain sign-in panel says the same thing from the other
+side. The 409 on a taken company name says the same again. A unit test asserts that copy is still there, because
+copy is the only defence against the failure the contract calls out by hand. Two small deviations in files this
+track does not own: the onboarding wizard jumps once to the first incomplete step (a founder arriving from
+sign-up would otherwise land on a "Name the company" form they cannot submit), and its step-1 hint now points at
+Google sign-in rather than describing the bootstrap token as the way in. Tests: `tests/unit/test_signin_flow.py`
+(9 — the sign-up cookie's round trip, tamper, expiry and salt separation, its Path under both mount prefixes,
+the state-mismatch page, and the copy) and seven in `tests/functional/test_auth_api.py` (a stranger reaching a
+real new tenant and owning it, a forged/absent sign-up cookie refused, an unverified address refused with no
+user created, an inactive account refused and not given a company, the callback hit directly, a stale state
+cookie, an existing user landing in **another** tenant than the install's, `/auth/providers`, and sign-out with
+no session). `docs/GOOGLE-SIGNIN.md` is the operator runbook: project, consent screen, scopes, the exact
+redirect URI and JS origin (with a table of the four ways to get them subtly wrong, and the local-dev pair),
+the two `.env` variables, the publish step — spelled out that a Testing-mode client admits only listed test
+users and that `openid email profile` are non-sensitive so publishing needs no Google review — what each kind
+of person gets, and a troubleshooting table. Gates green (394 unit / 125 functional / 9 regression, plus the
+pre-existing `tests/regression/test_slack_end_to_end.py` order dependency another track is fixing).
+
+**PE review — public exposure (2026-09-15).** Sprint 3d's two tracks reviewed as one deployment, against the
+threat model they create: a real certificate, a URL meant to be shared, and self-serve sign-up. Five defects
+confirmed and fixed, each with a test; no cross-tenant read, write or action was found — RLS, the SECURITY
+DEFINER lookups and the per-tenant credential resolution all hold on the new paths. (1) **The end-to-end walk
+was a time bomb, not an order dependency.** How many `high`/`cos.risk` signals the shared fixtures raise is a
+function of the wall clock (`finance.bill_due_7d` and `finance.cash_low` are date-relative; the count went from
+5 to 6 on 2026-09-12, a day after the walk was written), and the walk assumed tenant B's single `tick_15m`
+drained its backlog — delivery is deliberately capped at `delivery.SIGNALS_PER_TICK`, so the sixth signal was
+still queued and the final assertion saw `['sent', 'sent']`. The product was right; the test now drains
+explicitly (`drain_signal_backlog`, bounded, returning what it sent) for both tenants and asserts a second drain
+sends nothing, which is the stronger claim it meant to make. The same assumption is removed from tenant A's
+two-tick section. (2) **`POST /onboarding/tenant` checks the same bootstrap token as `POST /auth/bootstrap`, and
+only the latter was throttled** — the brute force simply moved next door, on the one route a stranger can reach.
+Both now share `api/ratelimit.py` (5 per source per minute), which also keys on the entry the *proxy* appended
+to `X-Forwarded-For`: behind Caddy `request.client.host` is the proxy's own address, so the old key made one
+global bucket for the whole internet. A `tests/conftest.py` autouse fixture clears the limiters between cases.
+(3) **A Google identity that already owned a company could mint more.** The callback enforces "an address that
+already belongs to a company never gets a second, empty one" by only issuing `sos_signup` for an unknown
+identity, but `google_id_token` is a documented field on the endpoint too and that path never looked. It now
+runs `auth_lookup_google` and refuses (403) an identity bound to a *different* tenant; re-running sign-up for
+your own company still works, because that is the wizard going back a step. Together with (2) this closes the
+"unauthenticated route that costs money" hole: every new company arrives with its own monthly Tier-2 budget the
+daemon will spend. (4) **`/login?next=` was an open redirect** on the one hostname the product asks people to
+trust — `window.location` followed the query string verbatim. `web/lib/api.ts::safeNext` now allows same-origin
+paths only (`//evil.com` and `/\evil.com` included), guarded by a source assertion like the sign-up copy gate.
+(5) **`test_api_token_lifecycle` was flaky one run in sixty-four**: it tampered with a token by substituting a
+fixed character, which is a no-op when the token already ends in it — asserting that a *valid* token is
+rejected. Reviewed and deliberately NOT changed, with reasons in the report: `/docs`, `/redoc` and
+`/openapi.json` stay public (schema disclosure, no data, one line to disable); `api/deps.py::_is_local_host`
+still trusts the `Host` header for the `Secure` flag (Caddy only routes the configured hostname, so it is not
+reachable); a tenant row left with no users is adoptable by a stranger who guesses the name (impossible to
+create through the product — sign-up writes tenant and owner in one transaction — and fixing it would refuse
+operator-pre-created tenants). New offline gates for the parts `docker compose config` cannot check without a
+daemon: `tests/unit/test_deploy_topology.py` pins the profile split (a bare `up` is the pre-Sprint-3d stack),
+the loopback-only publishes for the API and the database, `${VAR:-default}` on every compose variable, the
+no-domain `:80` path, prefix pass-through, the security headers, and — generalising Track H's `.env.example`
+finding so it cannot come back on the next key — that no key with an EMPTY value carries a trailing comment.
+The Caddyfile records why access logging is off and how to redact the OAuth `code` if it is ever turned on.
+Schema + RLS re-applied twice over the populated functional database with no table, column, policy, grant or
+forced-RLS flag lost. Gates green (409 unit / 128 functional / 10 regression), standalone and in `make check`,
+repeatably, on a fresh database; `npm run build`, `npx tsc --noEmit` and `npm run lint` green.
+
+**PE review follow-up — what a shared URL costs, and what it shows (2026-09-15).** Two pre-launch fixes on the
+deployment Sprint 3d created. (1) **A self-serve tenant no longer arrives with the operator's budget.** Sign-up
+through Google now creates the tenant on a new `tenants.tier` value, `self_serve`, whose monthly Tier-2
+allowance is `STARTUPOS_SIGNUP_TIER2_TOKENS` (default **100 000**, ~7% of the founder tier); an
+operator-created tenant (bootstrap token) is untouched on `founder` = 1 500 000. The tier is the whole
+mechanism — `daemon/budget.allowed_for` already read nothing else — so the cap applies every month with nothing
+to remember, promoting a real customer is one `UPDATE tenants SET tier = 'founder'`, and there is no second
+budgeting system. Two holes the cap would otherwise have had: the tier is set on INSERT only, so re-running
+sign-up cannot downgrade a tenant an operator has promoted; and `POST /onboarding/cadence` (which the tenant
+itself owns) now refuses a `tier2_tokens_allowed` above its tier's allowance with a 422 that names the number,
+returning `tier2_tokens_ceiling` there and in `/onboarding/status` so the wizard offers a number it can
+actually save instead of the hardcoded 1.5M. `STARTUPOS_ALLOW_SIGNUP=0` is the off switch: the Google callback
+renders the existing themed problem page (`signup_closed`) instead of issuing a sign-up cookie,
+`POST /onboarding/tenant` refuses with the same wording before it verifies anything, `GET /auth/providers`
+carries `signup` so the sign-in page says new companies are closed (and hides the sign-up form on a stale
+`?new=google` link) rather than walking a stranger through a Google round trip to a 403, and both the
+operator's bootstrap path and sign-in for existing people are unaffected. The default is **open**, because
+sharing the link is the product. (2) **`/docs`, `/redoc` and `/openapi.json` are no longer served on a public
+deployment** — the one item the previous review deliberately left. `auth/config.docs_enabled()` keys off
+`STARTUPOS_DOMAIN`/`STARTUPOS_PATH_PREFIX` — the variables a public deploy cannot function without — rather
+than a flag of its own that somebody could forget; `STARTUPOS_ENABLE_DOCS` overrides in both directions. When
+off, FastAPI never mounts the routes (404, not 401) and they leave `PUBLIC_PATHS`, so
+`test_only_the_enumerated_routes_are_public` stays exactly accurate; `scripts/smoke_public.sh` now fails a
+deploy where they answer. Tests: 3 in `tests/unit/test_daemon_budget.py` (the env-backed allowance, a
+self-serve tenant budgeted from its tier, and the normal → conserve → exhausted ladder walked at the smaller
+number), 7 in the new `tests/unit/test_public_exposure.py` (both halves of the public topology close the docs,
+both overrides, the routes absent and the fence unchanged), 4 in `tests/functional/test_auth_api.py` (a
+self-serve company capped and unable to lift its own cap, an operator-created one unchanged at 1.5M, sign-up
+closed across route/callback/providers with the operator's bootstrap still working), plus source gates for the
+sign-in copy and for the three new keys in `.env.example`. `docs/HOSTING.md` gets the operator's version of
+both. Gates green (421 unit / 132 functional / 10 regression); `npm run build`, `npx tsc --noEmit`,
+`npm run lint` green.

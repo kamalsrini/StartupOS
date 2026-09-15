@@ -1,0 +1,40 @@
+# Next.js web app, built in `output: "standalone"` mode (see web/next.config.mjs).
+#
+# Stage 1 installs dependencies from the lockfile, stage 2 builds, stage 3 carries only the standalone server
+# plus static assets. NEXT_PUBLIC_* values are inlined at BUILD time, so they arrive as build args — changing
+# NEXT_PUBLIC_API_URL means rebuilding this image, not restarting the container.
+
+# --- deps --------------------------------------------------------------------------
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+# --- build -------------------------------------------------------------------------
+FROM node:20-alpine AS build
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY --from=deps /app/node_modules ./node_modules
+COPY web/ ./
+# "/api" = same origin as the page, served by Caddy and passed through to the API unchanged.
+ARG NEXT_PUBLIC_API_URL=/api
+ARG NEXT_PUBLIC_ALLOW_BOOTSTRAP=
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_ALLOW_BOOTSTRAP=$NEXT_PUBLIC_ALLOW_BOOTSTRAP
+RUN npm run build
+
+# --- runtime -----------------------------------------------------------------------
+FROM node:20-alpine AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+# Non-root. node:20-alpine ships uid/gid 1000 as `node`; use it rather than minting another.
+RUN mkdir -p /app/.next && chown -R node:node /app
+COPY --from=build --chown=node:node /app/.next/standalone ./
+COPY --from=build --chown=node:node /app/.next/static ./.next/static
+# `public/` is optional in this app; the build only emits it when it exists, so it is not copied.
+USER node
+EXPOSE 3000
+CMD ["node", "server.js"]

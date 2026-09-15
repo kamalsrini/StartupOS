@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "ruff", "httpx"]
+dev = ["pytest", "pytest-asyncio", "ruff", "httpx", "pyyaml"]  # pyyaml: tests/unit/test_deploy_topology.py reads docker-compose.yml
 
 [tool.ruff]
 line-length = 120

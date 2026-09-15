@@ -1,0 +1,12 @@
+# Keep build contexts small and deterministic. Both Dockerfile (python) and Dockerfile.web use the repo root
+# as context, so anything listed here is invisible to every image build.
+.git
+.env
+*.pyc
+__pycache__
+.pytest_cache
+.ruff_cache
+pgdata
+web/node_modules
+web/.next
+node_modules

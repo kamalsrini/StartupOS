@@ -9,6 +9,7 @@ Tier-1 tokens are metered (tier1_tokens_used, cost_usd) but do not count against
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
@@ -22,6 +23,39 @@ ALLOWED_BY_TIER: dict[str, int] = {
     "growth": 20_000_000,
 }
 DEFAULT_ALLOWED = ALLOWED_BY_TIER["founder"]
+
+# Self-serve sign-up (Sprint 3d): a tenant nobody vetted, created by a stranger who had the public URL. It is a
+# real tenant in every other way, so it gets a real tier — just a small one. `tenants.tier` is the only thing
+# that decides an allowance, so a trial tenant cannot drift out of step with its budget, and an operator
+# promotes one with a single UPDATE (`tier = 'founder'`) instead of editing a budget row per month, forever.
+SELF_SERVE_TIER = "self_serve"
+DEFAULT_SIGNUP_TIER2_TOKENS = (
+    100_000  # ~7% of the founder tier: enough to see the product work, not to be worth abusing
+)
+
+
+def signup_allowance() -> int:
+    """Monthly Tier-2 allowance for a self-serve tenant — STARTUPOS_SIGNUP_TIER2_TOKENS.
+
+    Read per call (not at import) so an operator can change it without a rebuild and tests can set it. A
+    missing, empty or unparseable value is the conservative default; a negative one clamps to 0, which
+    `state()` already treats as exhausted.
+    """
+    raw = os.environ.get("STARTUPOS_SIGNUP_TIER2_TOKENS")
+    if raw in (None, ""):
+        return DEFAULT_SIGNUP_TIER2_TOKENS
+    try:
+        return max(0, int(str(raw).strip()))
+    except ValueError:
+        return DEFAULT_SIGNUP_TIER2_TOKENS
+
+
+def allowed_for_tier(tier: str | None) -> int:
+    """The monthly Tier-2 allowance a tier carries. Unknown tiers fall back to the founder allowance."""
+    if tier == SELF_SERVE_TIER:
+        return signup_allowance()
+    return ALLOWED_BY_TIER.get(tier or "founder", DEFAULT_ALLOWED)
+
 
 CONSERVE_AT = 0.90
 EXHAUSTED_AT = 1.00
@@ -47,7 +81,7 @@ def state(used: int, allowed: int) -> str:
 def allowed_for(conn: psycopg.Connection, tenant_id: str) -> int:
     row = conn.execute("SELECT tier FROM tenants WHERE id = %s", (tenant_id,)).fetchone()
     tier = (row or {}).get("tier") or "founder"
-    return ALLOWED_BY_TIER.get(tier, DEFAULT_ALLOWED)
+    return allowed_for_tier(tier)
 
 
 def get_or_create(

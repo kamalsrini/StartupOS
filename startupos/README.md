@@ -33,6 +33,9 @@ No model call in ingest, polling or rendering. Every model call goes through `da
 
 ## Deploy to the Azure VM
 ```
-./scripts/deploy_azure.sh        # rsync + docker compose up (db, migrate, ingest, daemon, api)
+./scripts/deploy_azure.sh        # rsync + docker compose up
+./scripts/smoke_public.sh https://<domain>   # verify from outside after a public deploy
 ```
+With `STARTUPOS_DOMAIN` set in `.env` this deploys the public edge — `https://<domain>/` is the web app and `https://<domain>/api/...` the API, on one Let's Encrypt certificate (`caddy` + `web`, compose profile `public`). With it empty, it deploys exactly what it always did (db, migrate, ingest, daemon, api) and publishes nothing. Full operator runbook — DNS, the NSG rules, certificates, moving domains: `../docs/HOSTING.md`. Sign-in setup: `../docs/GOOGLE-SIGNIN.md`.
+
 Sources without credentials are skipped (never fixtures) on a real tenant. Check `connections.status` / `last_error`, or `curl localhost:8000/health` on the VM.

@@ -1,3 +1,9 @@
+# StartupOS services.
+#
+# Default (`docker compose up -d`)            : db, migrate, ingest, daemon, api — exactly as before Sprint 3d.
+# Public edge (`--profile public`)            : adds `web` (Next.js) and `caddy` (TLS + routing) for the one
+#                                               hostname topology in CONTRACTS.md Sprint 3d.
+# Everything works with STARTUPOS_DOMAIN unset: caddy then listens on :80 with no ACME.
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -6,7 +12,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-startupos}
       POSTGRES_DB: startupos
     volumes: ["pgdata:/var/lib/postgresql/data"]
-    ports: ["5432:5432"]
+    # Loopback only: `psql postgresql://postgres@localhost:5432/startupos` still works on the host, but the
+    # database is never reachable from the network. Set STARTUPOS_DB_BIND=0.0.0.0 if you deliberately need that.
+    ports: ["${STARTUPOS_DB_BIND:-127.0.0.1}:5432:5432"]
     healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 5s, retries: 10 }
 
   migrate:
@@ -45,9 +53,55 @@ services:
     environment:
       DATABASE_URL: "postgresql://postgres:${POSTGRES_PASSWORD:-startupos}@db:5432/startupos"
       STARTUPOS_APP_DSN: "postgresql://startupos_app:${STARTUPOS_APP_PASSWORD:-startupos_app}@db:5432/startupos"
-    ports: ["8000:8000"]
+      # Caddy passes /api/... through unchanged, so the API mounts every route (and every Set-Cookie path)
+      # under this prefix. Empty (the default here, and what a no-domain `docker compose up` gets) is exactly
+      # the pre-Sprint-3d behaviour. The public deploy sets STARTUPOS_PATH_PREFIX=/api in .env, alongside a
+      # STARTUPOS_PUBLIC_URL that ends in /api; scripts/deploy_azure.sh refuses to deploy if they disagree.
+      STARTUPOS_PATH_PREFIX: "${STARTUPOS_PATH_PREFIX:-}"
+    # No longer published on 0.0.0.0: the proxy is the only way in from outside, so the VM needs 22/80/443 only.
+    # Loopback keeps `curl http://localhost:8000/health` working when you ssh to the box. Set
+    # STARTUPOS_API_BIND=0.0.0.0 only if you deliberately want the raw API exposed.
+    ports: ["${STARTUPOS_API_BIND:-127.0.0.1}:8000:8000"]
     depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+
+  # --- public edge (profile: public) -------------------------------------------------
+  # Not started by a bare `docker compose up`; scripts/deploy_azure.sh adds --profile public.
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        # Relative, same origin as the page — no CORS, no second certificate. Inlined at BUILD time, so a
+        # change here needs `--build` (deploy_azure.sh always rebuilds).
+        NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-/api}"
+        NEXT_PUBLIC_ALLOW_BOOTSTRAP: "${NEXT_PUBLIC_ALLOW_BOOTSTRAP:-}"
+    profiles: ["public"]
+    expose: ["3000"]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["public"]
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      # A hostname makes Caddy get a Let's Encrypt certificate; ":80" is plain HTTP with no ACME.
+      SITE_ADDRESS: "${STARTUPOS_DOMAIN:-:80}"
+      # Never empty: Caddy's `email` global option needs an argument, and an empty-but-set env var does not
+      # fall back to the Caddyfile default. The placeholder is only ever seen on the :80 (no-ACME) path —
+      # scripts/deploy_azure.sh refuses to deploy a domain without a real address here.
+      STARTUPOS_ACME_EMAIL: "${STARTUPOS_ACME_EMAIL:-acme@localhost}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account keys. Losing these re-issues on every deploy and will hit Let's Encrypt's
+      # rate limit (5 certificates per hostname per week) — never `docker compose down -v` in production.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api, web]
     restart: unless-stopped
 
 volumes:
   pgdata: {}
+  caddy_data: {}
+  caddy_config: {}

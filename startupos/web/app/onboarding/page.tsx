@@ -71,8 +71,16 @@ export default function OnboardingPage() {
   const [tz, setTz] = useState("America/Los_Angeles");
   const [hour, setHour] = useState(7);
   const [channel, setChannel] = useState<"web" | "slack" | "both">("web");
+  // Seeded from the tenant's own ceiling once status arrives (below): a self-serve company's monthly allowance
+  // is far smaller than the founder default, and offering a number the API will refuse is not a form.
   const [budget, setBudget] = useState(1500000);
+  const [budgetCeiling, setBudgetCeiling] = useState<number | null>(null);
 
+  // Sprint 3d (Track G): a founder who just signed up with Google arrives here with step 1 already done (the
+  // company was created on the sign-in page, from their verified Google identity). Landing them on a "Name the
+  // company" form they cannot submit reads like a broken product, so the first status we see picks up where
+  // they actually are. Only once, and only forwards — it must never yank someone off a step they chose.
+  const jumped = useRef(false);
   const refresh = useCallback(async () => {
     // Status is per signed-in user; a 401 here just means "not signed up yet" — don't bounce to /login.
     if (!(await me().catch(() => null))) return;
@@ -80,6 +88,17 @@ export default function OnboardingPage() {
       const st = await apiGet<OnboardingStatus>("/onboarding/status");
       setStatus(st);
       setConfirmed(st.cards_confirmed);
+      if (typeof st.tier2_tokens_ceiling === "number") {
+        const ceiling = st.tier2_tokens_ceiling;
+        setBudgetCeiling(ceiling);
+        setBudget((b) => (b > ceiling ? ceiling : b));
+      }
+      if (!jumped.current) {
+        jumped.current = true;
+        const done = [st.steps.tenant, st.steps.connections, st.steps.compiled, st.steps.cards, st.steps.pulse, st.steps.cadence];
+        const first = done.indexOf(false);
+        if (done[0] && first > 0) setStep(first);
+      }
     } catch (e) {
       setErr(String(e));
     }
@@ -155,7 +174,7 @@ export default function OnboardingPage() {
               {ALLOW_BOOTSTRAP ? (
                 <div className={s.field}><label className={s.label}>Bootstrap token (STARTUPOS_BOOTSTRAP_TOKEN)</label><input type="password" value={bootstrapToken} onChange={(e) => setBootstrapToken(e.target.value)} /></div>
               ) : (
-                <div className={s.hint}>Sign-up needs the operator&apos;s bootstrap token or Google sign-in — already have an account? <a href="/login">Sign in</a>.</div>
+                <div className={s.hint}>Sign-up happens on the sign-in page: <a href="/login">continue with Google</a> and, if that address has no account yet, you are offered a new company of your own. This form is for operator installs that use a bootstrap token.</div>
               )}
               <div className={s.hint}>Behind it: tenant created, five brain slices seeded as drafts. No model call happens here.</div>
               <div className={s.actions}>
@@ -371,7 +390,12 @@ export default function OnboardingPage() {
                 </div>
                 <div className={s.field}><label className={s.label}>Monthly Tier-2 token budget</label><input type="number" value={budget} onChange={(e) => setBudget(parseInt(e.target.value || "0", 10))} /></div>
               </div>
-              <div className={s.hint}>Founder tier default: 1.5M Tier-2 tokens/month. Overage degrades to Tier 0/1 — never a surprise invoice.</div>
+              <div className={s.hint}>
+                {budgetCeiling !== null
+                  ? `Your plan allows up to ${budgetCeiling.toLocaleString()} Tier-2 tokens/month.`
+                  : "Founder tier default: 1.5M Tier-2 tokens/month."}{" "}
+                Overage degrades to Tier 0/1 — never a surprise invoice.
+              </div>
               <div className={s.actions}>
                 <button className="btn btn-primary" disabled={busy} onClick={() => guard(async () => { await apiPost("/onboarding/cadence", { timezone: tz, pulse_hour: hour, channel, tier2_tokens_allowed: budget }); await refresh(); })}>Save cadence</button>
                 {status?.steps.cadence ? <Link className="btn" href="/cockpit">Open the Cockpit →</Link> : null}

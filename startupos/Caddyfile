@@ -1,0 +1,55 @@
+# StartupOS public edge. One hostname, one certificate, same-site cookies (CONTRACTS.md Sprint 3d).
+#
+#   https://<domain>/          -> web:3000    (Next.js)
+#   https://<domain>/api/...   -> api:8000    (FastAPI, which OWNS the /api prefix)
+#
+# The /api prefix is passed through UNCHANGED. Do not add `uri strip_prefix /api` here: the API mounts itself
+# under STARTUPOS_PATH_PREFIX=/api and writes Set-Cookie Paths to match, and stripping would break both.
+#
+# SITE_ADDRESS is the site block's address, supplied by docker-compose.yml:
+#   with STARTUPOS_DOMAIN set -> "os.example.com"  -> Caddy gets a Let's Encrypt certificate automatically
+#   with it unset             -> ":80"            -> plain HTTP, no ACME (local / no-domain deploys)
+{
+	email {$STARTUPOS_ACME_EMAIL:acme@localhost}
+	# ACME only ever runs for a real hostname; the default above is a placeholder for the :80 path.
+}
+
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	header {
+		# 1 year. Only meaningful over HTTPS; harmless on the :80 path.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		# Do not advertise the proxy.
+		-Server
+	}
+
+	# Access logging is deliberately NOT enabled. Caddy writes no per-request log unless a `log` directive is
+	# present here, and the one request worth caring about is Google's OAuth callback, whose query string carries
+	# the single-use authorization `code`. If you ever do turn logging on, redact it rather than storing it:
+	#
+	#   log {
+	#   	format filter {
+	#   		wrap console
+	#   		fields {
+	#   			request>uri query {
+	#   				replace code REDACTED
+	#   				replace state REDACTED
+	#   			}
+	#   		}
+	#   	}
+	#   }
+
+	# Exactly /api and everything under it — not /apifoo, which a bare `/api*` matcher would also catch.
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

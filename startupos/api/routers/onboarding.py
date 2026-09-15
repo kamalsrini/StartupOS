@@ -17,8 +17,10 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from api import ratelimit
 from api.deps import api_dsn, current_principal, get_db, get_tenant, now_utc, scalar, set_session_cookie
 from auth import bootstrap, google, sessions
+from auth import config as auth_config
 from auth.identity import Principal
 from common import jobs as job_queue
 from common import secrets
@@ -34,7 +36,10 @@ SOURCES = ("linear", "slack", "brex", "apollo", "vercel", "posthog", "github", "
 SLICES: tuple[str, ...] = ("identity", "icp", "voice", "pricing", "team")
 DRAFT_MARK = "Draft — confirm or edit."
 COMPILE_SKILL = "onboarding.compile"
-DEFAULT_TIER2_TOKENS = 1_500_000  # the monthly Tier-2 budget a company starts with
+DEFAULT_TIER2_TOKENS = 1_500_000  # the monthly Tier-2 budget an OPERATOR-created company starts with
+# A self-serve company (a stranger with the public URL, signed up with Google) starts on the `self_serve` tier
+# instead, whose allowance is STARTUPOS_SIGNUP_TIER2_TOKENS (daemon/budget.py). Sprint 3d PE review: rate
+# limiting caps how FAST strangers arrive; only the tier caps what each one can then spend.
 
 # Which two sources we recommend, by what the website suggests (deterministic keyword match; brief §5.1 step 2).
 RECOMMENDATIONS: list[tuple[tuple[str, ...], tuple[str, str]]] = [
@@ -52,6 +57,7 @@ class TenantIn(BaseModel):
     name_of_owner: str | None = Field(default=None, max_length=120)
     bootstrap_token: str | None = None  # STARTUPOS_BOOTSTRAP_TOKEN — single-operator install
     google_id_token: str | None = None  # verified Google OIDC id_token — self-serve sign-up
+    # (or the same id_token in the signed `sos_signup` cookie the Google callback sets for a brand-new identity)
 
 
 class ConnectionIn(BaseModel):
@@ -82,6 +88,23 @@ class CadenceIn(BaseModel):
     # Which Slack channel StartupOS posts in (`#name` or a channel id). Send null/"" to unset it, which means
     # "post where the founder put StartupOS while installing Slack" (`slack_installations.default_channel`).
     slack_channel: str | None = None
+
+
+def _budget():
+    """daemon.budget, imported lazily — the API must not depend on the daemon at import time (see slack.py)."""
+    from daemon import budget
+
+    return budget
+
+
+def tier2_ceiling(conn: psycopg.Connection, tenant_id: str) -> int:
+    """The most Tier-2 tokens this tenant may be allowed in a month: its tier's allowance, nothing more.
+
+    The cadence form is inside the tenant, so without a ceiling a self-serve company could raise its own budget
+    to any number it liked and the cap would be decoration. Raising it is an operator action (`UPDATE tenants
+    SET tier = ...`), the same act that grants the allowance in the first place.
+    """
+    return _budget().allowed_for(conn, tenant_id)
 
 
 def slugify(name: str) -> str:
@@ -117,6 +140,14 @@ def recommend_sources(name: str, website: str | None) -> tuple[str, str]:
     return ("linear", "slack")
 
 
+# Sign-up is the one unauthenticated write on a publicly reachable host, it checks the same bootstrap token as
+# POST /auth/bootstrap, and every company it creates arrives with its own monthly Tier-2 token budget that the
+# daemon will spend. So it is rate-limited like the bootstrap route it shares a secret with — an unauthenticated
+# route that costs money is as bad as one that leaks data. 5 companies a minute from one source is far more than
+# a founder needs and far less than an abuser wants.
+_signup_throttle = ratelimit.Throttle(name="onboarding.tenant")
+
+
 @router.post("/tenant")
 def create_tenant(body: TenantIn, request: Request, response: Response) -> dict[str, Any]:
     """Sign-up: the only unauthenticated write. Needs the bootstrap token OR a verified Google id_token.
@@ -124,8 +155,11 @@ def create_tenant(body: TenantIn, request: Request, response: Response) -> dict[
     Creates tenant + owner (connection bound to the new tenant so RLS WITH CHECK passes for the app role), seeds
     the five brain slices, and returns a session cookie so the caller can continue authenticated.
     """
+    if not _signup_throttle.allow(ratelimit.client_key(request)):
+        raise HTTPException(status_code=429, detail="too many sign-up attempts; wait a minute")
     owner_email: str | None = None
     owner_name: str | None = None
+    google_sub: str | None = None
     if body.bootstrap_token is not None:
         if not bootstrap.enabled():
             raise HTTPException(status_code=404, detail="bootstrap is disabled")
@@ -134,29 +168,73 @@ def create_tenant(body: TenantIn, request: Request, response: Response) -> dict[
         owner_email = (body.email or "").strip().lower()
         if not owner_email:
             raise HTTPException(status_code=422, detail="email is required with bootstrap_token")
-    elif body.google_id_token:
+    elif id_token := (body.google_id_token or google.read_signup_cookie(request.cookies.get(google.SIGNUP_COOKIE))):
+        # Self-serve sign-up. The operator can close this door entirely (STARTUPOS_ALLOW_SIGNUP=0) without
+        # touching the rest of sign-in: existing people keep signing in, and the operator keeps creating
+        # companies with the bootstrap token. Checked before the token is verified so a closed install does no
+        # work for a stranger, and answered in copy a person can act on rather than a bare 403.
+        if not auth_config.allow_signup():
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "This StartupOS installation is not accepting new companies right now, so none was "
+                    "created. If you were invited to a company that is already here, ask its owner to invite "
+                    "your address and then sign in; otherwise ask whoever runs this installation."
+                ),
+            )
+        # Either the caller hands us the id_token, or Either the caller hands us the id_token, or it is the one the Google callback put
+        # in `sos_signup` after verifying an identity that matched no user (Sprint 3d, Track G) — a cookie so it
+        # never reaches JavaScript, the URL bar or a log. Either way it is verified here, again, before it counts.
         try:
-            claims = google.verify_id_token(body.google_id_token)  # nonce optional on this path
+            claims = google.verify_id_token(id_token)  # nonce optional on this path
+        except google.UnverifiedEmailError:
+            raise HTTPException(status_code=403, detail="Google has not verified this e-mail address") from None
         except google.GoogleAuthError:
             raise HTTPException(status_code=403, detail="invalid Google id_token") from None
         owner_email = str(claims["email"]).lower()
         owner_name = claims.get("name")
+        google_sub = str(claims.get("sub") or "") or None
         if body.email and body.email.strip().lower() != owner_email:
             raise HTTPException(status_code=403, detail="email does not match the Google account")
     else:
         raise HTTPException(
             status_code=401,
-            detail="bootstrap_token or google_id_token is required",
+            detail=(
+                "Sign in with Google first — this sign-up has expired or was never started. "
+                "Go back to the sign-in page and continue with Google."
+            ),
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     tenant_id = slugify(body.name)
     website = _normalize_site(body.website)
+    # The tier IS the budget (daemon/budget.py reads nothing else), so a self-serve company is created on the
+    # small self-serve tier and an operator-created one is unchanged. Only ever set on INSERT below: re-running
+    # sign-up must not silently downgrade a company an operator has since promoted.
+    tier = _budget().SELF_SERVE_TIER if google_sub else "founder"
+    if google_sub:  # the Google sign-up path only; the bootstrap token is the operator's own install
+        # "An address that already belongs to a company never gets a second, empty one" (CONTRACTS.md Sprint 3d).
+        # GET /auth/google/callback enforces that by only ever issuing the `sos_signup` cookie for an identity it
+        # found no user for — but `google_id_token` is a documented field on this endpoint too, and that path
+        # skipped the check entirely. Without it, one Google account is an unbounded tenant-minting primitive on
+        # a public host (and a quiet way for a person to end up with two workspaces and no idea which is which).
+        # Re-running sign-up for the company you already belong to stays allowed: that is the wizard going back.
+        with get_conn(api_dsn(), tenant_id="") as anon:
+            existing = anon.execute("SELECT * FROM auth_lookup_google(%s, %s)", (google_sub, owner_email)).fetchone()
+        if existing and existing["tenant_id"] != tenant_id:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"{owner_email} already has a StartupOS account. Sign in with Google instead — "
+                    "an address that belongs to a company does not get a second, empty one."
+                ),
+            )
     with get_conn(api_dsn(), tenant_id=tenant_id) as conn:
         conn.execute(
-            """INSERT INTO tenants (id, name, website, timezone) VALUES (%s, %s, %s, coalesce(%s, 'America/Los_Angeles'))
+            """INSERT INTO tenants (id, name, website, timezone, tier)
+               VALUES (%s, %s, %s, coalesce(%s, 'America/Los_Angeles'), %s)
                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, website = coalesce(EXCLUDED.website, tenants.website)""",
-            (tenant_id, body.name, website, body.timezone),
+            (tenant_id, body.name, website, body.timezone, tier),
         )
         if conn.execute("SELECT count(*) AS n FROM users WHERE tenant_id = %s", (tenant_id,)).fetchone()["n"]:
             # An existing company: only its members may re-run sign-up (no takeover of a slug by a stranger).
@@ -164,7 +242,14 @@ def create_tenant(body: TenantIn, request: Request, response: Response) -> dict[
                 "SELECT id FROM users WHERE tenant_id = %s AND lower(email) = %s", (tenant_id, owner_email)
             ).fetchone()
             if not member:
-                raise HTTPException(status_code=409, detail="a company with this name already exists")
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"A company called {body.name!r} is already on StartupOS. If that is your company, ask "
+                        f"whoever set it up to invite {owner_email} — companies are invite-only. Otherwise pick "
+                        "a different name; you will get your own, separate company."
+                    ),
+                )
         user = bootstrap.upsert_owner(conn, tenant_id, owner_email, owner_name or body.name_of_owner)
         seeded = 0
         for slice_name, content in template_slices(body.name, website).items():
@@ -178,6 +263,8 @@ def create_tenant(body: TenantIn, request: Request, response: Response) -> dict[
         row = conn.execute("SELECT * FROM tenants WHERE id = %s", (tenant_id,)).fetchone()
         _, cookie_value = sessions.create_session(conn, tenant_id, user["id"], request.headers.get("user-agent"))
     set_session_cookie(response, request, cookie_value)
+    # The sign-up cookie has done its one job; a leftover would let a stale identity create a second company.
+    response.delete_cookie(google.SIGNUP_COOKIE, path=auth_config.cookie_path("/onboarding"))
     return {
         "tenant": dict(row),
         "owner_email": owner_email,
@@ -523,13 +610,22 @@ def set_cadence(
         raise HTTPException(status_code=404, detail="tenant not found")
 
     month = date.today().replace(day=1)
+    ceiling = tier2_ceiling(conn, tenant_id)
     allowed = body.tier2_tokens_allowed
+    if allowed is not None and allowed > ceiling:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"This company's plan allows at most {ceiling:,} Tier-2 tokens a month. Ask whoever runs this "
+                "StartupOS installation to raise your tier if you need more."
+            ),
+        )
     if allowed is None:
         allowed = scalar(
             conn, "SELECT max(tier2_tokens_allowed) FROM budgets WHERE tenant_id=%s AND month=%s", (tenant_id, month)
         )
     if allowed is None:
-        allowed = DEFAULT_TIER2_TOKENS
+        allowed = min(DEFAULT_TIER2_TOKENS, ceiling)
     conn.execute(
         """INSERT INTO budgets (tenant_id, month, tier2_tokens_allowed) VALUES (%s, %s, %s)
            ON CONFLICT (tenant_id, month) DO UPDATE SET tier2_tokens_allowed = EXCLUDED.tier2_tokens_allowed""",
@@ -543,6 +639,7 @@ def set_cadence(
         "slack_channel": row["slack_channel"],
         "month": month.isoformat(),
         "tier2_tokens_allowed": allowed,
+        "tier2_tokens_ceiling": ceiling,
     }
 
 
@@ -568,6 +665,7 @@ def onboarding_status(
             "total": 6,
             "jobs": {"queued": 0, "running": 0, "done": 0, "failed": 0, "last_error": None, "chain": []},
             "first_pulse_ready": False,
+            "tier2_tokens_ceiling": tier2_ceiling(conn, tenant_id),
         }
     n_conn = scalar(conn, "SELECT count(*) FROM connections WHERE tenant_id=%s AND status='connected'", (tenant_id,))
     compiled = scalar(conn, "SELECT count(*) FROM runs WHERE tenant_id=%s AND skill=%s", (tenant_id, COMPILE_SKILL)) > 0
@@ -608,4 +706,7 @@ def onboarding_status(
         # Track O: the first-pulse chain as the daemon's job service sees it, and whether a pulse run exists yet.
         "jobs": job_queue.status_summary(conn, tenant_id),
         "first_pulse_ready": pulse,
+        # What this tenant's tier allows per month, so the cadence form offers a number it can actually save
+        # (a self-serve company's ceiling is far below the founder default the wizard used to hardcode).
+        "tier2_tokens_ceiling": tier2_ceiling(conn, tenant_id),
     }

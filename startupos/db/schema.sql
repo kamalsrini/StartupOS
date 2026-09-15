@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS tenants (
   name          TEXT NOT NULL,
   website       TEXT,
   timezone      TEXT NOT NULL DEFAULT 'America/Los_Angeles',
-  tier          TEXT NOT NULL DEFAULT 'founder',  -- founder | team | growth
+  tier          TEXT NOT NULL DEFAULT 'founder',  -- self_serve | founder | team | growth (daemon/budget.py)
   pulse_hour    SMALLINT NOT NULL DEFAULT 7,      -- local hour for the morning pulse
   pulse_channel TEXT NOT NULL DEFAULT 'web',      -- web | slack | both
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()

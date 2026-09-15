@@ -244,6 +244,16 @@ def cookie_secure_for(request: Request) -> bool:
     return config.cookie_secure() and not _is_local_host(request)
 
 
+def session_cookie_path() -> str:
+    """Path for the session cookie: '/' normally, '/api' when the API is mounted under STARTUPOS_PATH_PREFIX.
+
+    Set and delete must use the identical path or the browser silently keeps the old cookie.
+    """
+    from auth import config
+
+    return config.cookie_path("/")
+
+
 def set_session_cookie(response: Response, request: Request, value: str) -> None:
     from auth import sessions
 
@@ -254,7 +264,7 @@ def set_session_cookie(response: Response, request: Request, value: str) -> None
         httponly=True,
         samesite="lax",
         secure=cookie_secure_for(request),
-        path="/",
+        path=session_cookie_path(),
     )
 
 
@@ -262,5 +272,9 @@ def clear_session_cookie(response: Response, request: Request) -> None:
     from auth import sessions
 
     response.delete_cookie(
-        sessions.COOKIE_NAME, path="/", httponly=True, samesite="lax", secure=cookie_secure_for(request)
+        sessions.COOKIE_NAME,
+        path=session_cookie_path(),
+        httponly=True,
+        samesite="lax",
+        secure=cookie_secure_for(request),
     )

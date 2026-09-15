@@ -88,3 +88,21 @@ def login_as(conn, tenant_id: str, email: str, name: str | None = None) -> tuple
     _, cookie = sessions.create_session(conn, tenant_id, user["id"], "pytest")
     conn.commit()
     return user["id"], cookie
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """Rate limiting is a property of the deployment, not of the case under test.
+
+    `POST /auth/bootstrap` and `POST /onboarding/tenant` are throttled per process (api/ratelimit.py), and a
+    suite creates far more companies in a minute than any founder does. Clear the buckets around every test so
+    the limiters are exercised only by the tests that mean to, and never leak into the ones that do not.
+    """
+    try:
+        from api import ratelimit
+    except Exception:  # the API package is not importable in every environment; nothing to reset
+        yield
+        return
+    ratelimit.reset_all()
+    yield
+    ratelimit.reset_all()

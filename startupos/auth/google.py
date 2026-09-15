@@ -20,6 +20,12 @@ DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
 VALID_ISSUERS = frozenset({"https://accounts.google.com", "accounts.google.com"})
 OAUTH_COOKIE = "sos_oauth"
 OAUTH_COOKIE_MAX_AGE = 600  # seconds — one sign-in attempt
+# Sprint 3d (Track G): a verified Google identity that matches no user is offered a company of their own. The
+# id_token that proved that identity is handed to POST /onboarding/tenant in this short-lived, signed, HttpOnly
+# cookie instead of being put in a redirect URL — a URL would land in browser history, the Referer header and
+# any proxy log, and JavaScript would be able to read it.
+SIGNUP_COOKIE = "sos_signup"
+SIGNUP_COOKIE_MAX_AGE = 900  # seconds — long enough to type a company name, shorter than the id_token's hour
 JWKS_TTL = 3600
 DISCOVERY_TTL = 24 * 3600
 
@@ -30,6 +36,14 @@ _jwks_cache: tuple[float, dict[str, Any]] | None = None
 
 class GoogleAuthError(Exception):
     """Any failure to authenticate with Google (config, network, or an invalid id_token)."""
+
+
+class UnverifiedEmailError(GoogleAuthError):
+    """Google authenticated the account but has not verified the address (email_verified is not true).
+
+    Its own class because it is the one failure with a useful answer for the person: it is not a bug, a stale
+    cookie or a forgery — Google will not vouch for that address, so neither can we.
+    """
 
 
 def configured() -> bool:
@@ -100,6 +114,30 @@ def read_oauth_cookie(value: str | None) -> tuple[str, str] | None:
     if not isinstance(data, dict) or not data.get("state") or not data.get("nonce"):
         return None
     return str(data["state"]), str(data["nonce"])
+
+
+def _signup_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(config.session_secret(), salt=SIGNUP_COOKIE)
+
+
+def make_signup_cookie(id_token: str) -> str:
+    return _signup_serializer().dumps({"id_token": id_token})
+
+
+def read_signup_cookie(value: str | None) -> str | None:
+    """The id_token carried by a sign-up cookie, or None (absent, forged, or older than SIGNUP_COOKIE_MAX_AGE).
+
+    The id_token is still verified by the caller: this cookie only carries it, it never vouches for it.
+    """
+    if not value:
+        return None
+    try:
+        data = _signup_serializer().loads(value, max_age=SIGNUP_COOKIE_MAX_AGE)
+    except (BadSignature, ValueError):
+        return None
+    if not isinstance(data, dict) or not data.get("id_token"):
+        return None
+    return str(data["id_token"])
 
 
 # --- flow ------------------------------------------------------------------------
@@ -187,5 +225,5 @@ def verify_id_token(
     if not claims.get("email"):
         raise GoogleAuthError("invalid id_token: no email")
     if claims.get("email_verified") is not True:
-        raise GoogleAuthError("invalid id_token: email not verified")
+        raise UnverifiedEmailError("invalid id_token: email not verified")
     return claims

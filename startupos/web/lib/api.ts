@@ -88,6 +88,8 @@ export type OnboardingStatus = {
   total: number;
   jobs: OnboardingJobs;
   first_pulse_ready: boolean;
+  /** Most Tier-2 tokens a month this company's tier allows; the cadence form must not offer more. */
+  tier2_tokens_ceiling?: number;
 };
 
 export type Me = {
@@ -96,10 +98,38 @@ export type Me = {
 };
 
 // The tenant is never sent by the client: the API derives it from the session cookie.
+//
+// The base may be absolute ("http://localhost:8000", local dev / two-origin setups) or RELATIVE ("/api", the
+// deployed single-hostname topology where Caddy serves the app at / and the API at /api). `new URL(path, base)`
+// throws on a relative base, and for an absolute base with a path it would also drop that path
+// ("/api" in "https://host/api"), so join the strings ourselves and add the query with URLSearchParams.
 function url(path: string, params?: Record<string, string | undefined>): string {
-  const u = new URL(path, API_BASE);
-  if (params) for (const [k, v] of Object.entries(params)) if (v !== undefined) u.searchParams.set(k, v);
-  return u.toString();
+  const base = API_BASE.replace(/\/+$/, "");
+  const joined = base + (path.startsWith("/") ? path : "/" + path);
+  const query = new URLSearchParams();
+  if (params) for (const [k, v] of Object.entries(params)) if (v !== undefined) query.set(k, v);
+  const qs = query.toString();
+  return qs ? `${joined}?${qs}` : joined;
+}
+
+/** The absolute-or-relative URL of an API path — what an <a href> or a form action needs. */
+export function apiUrl(path: string): string {
+  return url(path);
+}
+
+/**
+ * A `?next=` value we are willing to send the browser to: a path on THIS origin, and nothing else.
+ *
+ * `/login?next=…` is a link anybody can construct, and the page redirects to it the moment it sees a live
+ * session. Handing that value to `window.location` unchecked is an open redirect on the one hostname the
+ * founder is telling people to trust — the classic phishing primitive ("the link really was os.example.com").
+ * Only a single leading slash qualifies: "//evil.com" and "/\evil.com" are protocol-relative URLs the browser
+ * treats as another origin, and "https://evil.com" needs no explanation.
+ */
+export function safeNext(value: string | null | undefined, fallback = "/cockpit"): string {
+  if (!value || !value.startsWith("/")) return fallback;
+  if (value.startsWith("//") || value.startsWith("/\\")) return fallback;
+  return value;
 }
 
 /** Auth guard: any 401 sends the browser to /login (except while already there). */
@@ -157,6 +187,23 @@ export async function me(): Promise<Me | null> {
   const res = await fetch(url("/auth/me"), { cache: "no-store", credentials: "include" });
   if (res.status === 401) return null;
   return handle<Me>(res);
+}
+
+/** Which sign-in methods this installation actually has. Public; never throws on a 401. */
+export type Providers = { google: boolean; bootstrap: boolean; signup: boolean };
+export async function providers(): Promise<Providers> {
+  try {
+    const res = await fetch(url("/auth/providers"), { cache: "no-store", credentials: "include" });
+    if (!res.ok) return { google: false, bootstrap: ALLOW_BOOTSTRAP, signup: true };
+    // `signup` was added after Track G shipped; an older API that does not send it is treated as open, which
+    // is what it is.
+    const body = (await res.json()) as Partial<Providers>;
+    return { google: !!body.google, bootstrap: !!body.bootstrap, signup: body.signup !== false };
+  } catch {
+    // The API being unreachable is not the same as Google being unconfigured; assume it works and let the
+    // sign-in attempt itself produce the real error rather than hiding the button.
+    return { google: true, bootstrap: ALLOW_BOOTSTRAP, signup: true };
+  }
 }
 
 export async function logout(): Promise<void> {
